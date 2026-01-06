@@ -77,6 +77,11 @@ export function postmanInfoEndpoint() {
   return getApiUrl('postman', '/info');
 }
 
+// Build PUT /info endpoint with optional id query parameter (defaults to id=1)
+export function postmanInfoPutEndpoint(id = 1) {
+  return getApiUrl('postman', `/info?id=${encodeURIComponent(id)}`);
+}
+
 /**
  * Default headers used across API tests.
  * - Pulls api_key from env to avoid hardcoding secrets.
@@ -114,6 +119,16 @@ export async function apiPost(request, url, body = {}, options = {}) {
   // Ensure Content-Type stays application/json and api_key / Accept are present
   // Playwright uses 'data' for raw body; stringify JSON
   return request.post(url, {
+    data: JSON.stringify(body),
+    headers,
+    ...options
+  });
+}
+
+// Helper to perform PUT requests with JSON body and default headers
+export async function apiPut(request, url, body = {}, options = {}) {
+  const headers = { ...defaultJsonHeaders(), ...(options.headers || {}), ...defaultApiHeaders() };
+  return request.put(url, {
     data: JSON.stringify(body),
     headers,
     ...options

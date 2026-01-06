@@ -1,28 +1,38 @@
-import defaultsFromJson from './postmanInfo.json' assert { type: 'json' };
+import defaultsPost from './postmanInfo.json' assert { type: 'json' };
+import defaultsPut from './postmanInfoPut.json' assert { type: 'json' };
 
-// Use JSON file as defaults (keeps JS factory behavior unchanged)
-const defaults = { ...defaultsFromJson };
-
+/**
+ * Create POST /info payload with optional overrides.
+ * - starts from defaultsPost and merges allowed nested/top-level overrides.
+ */
 export function createPostmanInfo(overrides = {}) {
-  // Start from a shallow copy of the default payload so we don't mutate `defaults`.
-  const result = { ...defaults };
+  const result = { ...defaultsPost };
 
-  // Merge nested `user` object if overrides provide it.
-  // This keeps default user fields (like permissions) unless the caller overrides them.
-  if (overrides.user) result.user = { ...defaults.user, ...overrides.user };
+  if (overrides.user) result.user = { ...defaultsPost.user, ...overrides.user };
+  if (overrides.contact) result.contact = { ...defaultsPost.contact, ...overrides.contact };
 
-  // Merge nested `contact` object if overrides provide it.
-  // Keeps default contact fields unless overridden.
-  if (overrides.contact) result.contact = { ...defaults.contact, ...overrides.contact };
-
-  // List of top-level keys we allow simple overrides for.
   const topLevelKeys = ['name', 'name2', 'active', 'timestamp'];
-
-  // For each allowed top-level key, if it exists in overrides, replace the default.
   for (const key of topLevelKeys) {
     if (key in overrides) result[key] = overrides[key];
   }
 
-  // Return the final payload object; `defaults` remains unchanged.
+  return result;
+}
+
+/**
+ * Create PUT /info payload with optional overrides.
+ * - starts from defaultsPut and merges allowed nested/top-level overrides.
+ */
+export function createPostmanInfoPut(overrides = {}) {
+  const result = { ...defaultsPut };
+
+  if (overrides.user) result.user = { ...defaultsPut.user, ...overrides.user };
+  if (overrides.contact) result.contact = { ...defaultsPut.contact, ...overrides.contact };
+
+  const topLevelKeys = ['name', 'name2', 'active', 'timestamp'];
+  for (const key of topLevelKeys) {
+    if (key in overrides) result[key] = overrides[key];
+  }
+
   return result;
 }
