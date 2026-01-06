@@ -1,28 +1,73 @@
-# Petstore API example (Playwright)
+# API Testing with Playwright
 
-Simple beginner-friendly API test scaffold using Playwright's test runner and the public Petstore API.
+Simple API testing framework using Playwright to demonstrate automation skills across multiple public APIs.
 
-Quick start
-
-1. Install dependencies:
+## 📦 Installation
 
 ```bash
+# Install dependencies
 npm install
-```
 
-2. Run tests:
+# Install Playwright browsers
+npx playwright install
 
-```bash
+RUN TEST:
+# Run all tests
+npx playwright test
+
+# Run specific test file
 npx playwright test tests/petstore.spec.js
-```
 
-Notes
+# Run with UI mode
+npx playwright test --ui
 
-- The base API URL can be overridden with the environment variable `API_BASE`.
-- Tests use Playwright's `request` fixture so no extra HTTP library is required.
+# Run with report
+npx playwright test --reporter=html
 
-Files added
+APIs Tested
+1. Petstore API (Swagger)
+Base URL: https://petstore.swagger.io/v2
 
-- `tests/env.js` — environment helpers
-- `tests/requestManager.js` — simple request helpers
-- `tests/petstore.spec.js` — example tests
+Endpoints:
+
+GET /pet/findByStatus - Find pets by status
+
+GET /store/inventory - Get store inventory
+
+Authentication: API key in header
+
+2. Postman Echo API
+Base URL: https://template.postman-echo.com
+
+Endpoints:
+
+POST /info - Create resource
+
+PUT /info?id=:id - Update resource
+
+DELETE /info?id=:id - Delete resource
+
+Features: Echoes back request data for validation
+
+3. DummyJSON API
+Base URL: https://dummyjson.com
+
+Endpoints:
+
+GET /products/:id - Get product details
+
+POST /products/add - Create product
+
+PUT /products/:id - Update product
+
+DELETE /products/:id - Delete product
+
+POST /auth/login - User authentication
+
+Configuration
+Environment variables can be set in .env file:
+
+env
+API_PET_BASE=https://petstore.swagger.io/v2
+API_POSTMAN_BASE=https://template.postman-echo.com
+API_KEY=your-api-key-here
