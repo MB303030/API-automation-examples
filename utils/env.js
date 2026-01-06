@@ -134,3 +134,15 @@ export async function apiPut(request, url, body = {}, options = {}) {
     ...options
   });
 }
+
+// Build DELETE /info endpoint with optional id query parameter (defaults to id=12345)
+export function postmanInfoDeleteEndpoint(id = 12345) {
+  return getApiUrl('postman', `/info?id=${encodeURIComponent(id)}`);
+}
+
+// Add this after your existing apiPut function
+// Helper to perform DELETE requests with default headers
+export async function apiDelete(request, url, options = {}) {
+  const headers = { ...defaultApiHeaders(), ...(options.headers || {}) };
+  return request.delete(url, { headers, ...options });
+}

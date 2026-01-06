@@ -2,10 +2,13 @@ import { test, expect } from '@playwright/test'; // Playwright test runner + ass
 import {
   postmanInfoEndpoint,      // builds POST /info URL
   postmanInfoPutEndpoint,   // builds PUT /info?id=... URL
+  postmanInfoDeleteEndpoint,// buildes DELTE /info?id=... URL
   apiPost,                  // helper to send JSON POST with default headers
-  apiPut                    // helper to send JSON PUT with default headers
+  apiPut,                   // helper to send JSON PUT with default headers
+  apiDelete                 //helper to send DELETE request with default headers
 } from '../utils/env.js';
 import { createPostmanInfo, createPostmanInfoPut } from '../post_requests/postmanInfo.js'; // payload factories
+
 
 test.describe('Postman Echo /info API', () => {
 
@@ -89,5 +92,26 @@ test.describe('Postman Echo /info API', () => {
       if (body?.args) expect(body.args.id).toBe('1');
     });
   }
+   // Single DELETE test - no loop needed
+  test('DELETE /info - delete resource', async ({ request }) => {
+    const endpoint = postmanInfoDeleteEndpoint(12345);     // full DELETE URL with id=12345
+    const res = await apiDelete(request, endpoint);       // send DELETE request
+    expect(res.status()).toBe(200);                       // expect HTTP 200
+    
+    const body = await res.json();                        // parse response JSON
+    
+    // Verify the DELETE was processed
+    expect(body).toBeTruthy();                            // ensure response is not empty
+    
+    // Postman Echo typically returns args with the query parameters
+    if (body.args) {
+      expect(body.args.id).toBe('12345');                 // verify the id parameter was echoed back
+    }
+    
+    // Verify the method was DELETE
+    if (body.method) {
+      expect(body.method.toLowerCase()).toBe('delete');    // verify the request method
+    }
+  });
 
 });
