@@ -4,6 +4,8 @@ on:
   schedule:
     # Runs at the start of every hour (e.g., 1:00, 2:00)
     - cron: '0 * * * *'
+    # # Runs at 07:00 UTC every day
+    # - cron: '0 7 * * *'
   workflow_dispatch:
     inputs:
       testType:
