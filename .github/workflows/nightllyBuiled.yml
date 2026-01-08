@@ -2,10 +2,8 @@ name: Enhanced Nightly Tests
 
 on:
   schedule:
-    # Runs every minute for testing (remove this once confirmed working)
-    - cron: '* * * * *'
-    # Original nightly schedule (uncomment when ready)
-    # - cron: '0 23 * * *'
+    # Runs at the start of every hour (e.g., 1:00, 2:00)
+    - cron: '0 * * * *'
   workflow_dispatch:
     inputs:
       testType:
@@ -17,6 +15,10 @@ jobs:
   test:
     runs-on: ubuntu-latest
     timeout-minutes: 30
+    
+    # Permission needed to deploy to GH Pages
+    permissions:
+      contents: write
     
     steps:
     - name: Checkout code
@@ -36,19 +38,18 @@ jobs:
     - name: Run tests
       id: tests
       run: |
-        # Run tests and capture exit code
-        npx playwright test --reporter=html,json,junit || true
-        TEST_EXIT_CODE=$?
-        echo "exit_code=$TEST_EXIT_CODE" >> $GITHUB_OUTPUT
+        # Run tests and capture the exit code WITHOUT forcing 'true' immediately
+        npx playwright test --reporter=html,json,junit > test_output.txt 2>&1 || TEST_EXIT_CODE=$?
         
-        # Count test results
+        # Default to 0 if variable is empty (meaning tests passed)
+        REAL_EXIT_CODE=${TEST_EXIT_CODE:-0}
+        echo "exit_code=$REAL_EXIT_CODE" >> $GITHUB_OUTPUT
+        
+        # Count test results using jq
         if [ -f test-results.json ]; then
-          PASSED=$(jq '.stats.passed // 0' test-results.json)
-          FAILED=$(jq '.stats.failed // 0' test-results.json)
-          SKIPPED=$(jq '.stats.skipped // 0' test-results.json)
-          echo "passed=$PASSED" >> $GITHUB_OUTPUT
-          echo "failed=$FAILED" >> $GITHUB_OUTPUT
-          echo "skipped=$SKIPPED" >> $GITHUB_OUTPUT
+          echo "passed=$(jq '.stats.passed // 0' test-results.json)" >> $GITHUB_OUTPUT
+          echo "failed=$(jq '.stats.failed // 0' test-results.json)" >> $GITHUB_OUTPUT
+          echo "skipped=$(jq '.stats.skipped // 0' test-results.json)" >> $GITHUB_OUTPUT
         else
           echo "passed=0" >> $GITHUB_OUTPUT
           echo "failed=0" >> $GITHUB_OUTPUT
@@ -73,15 +74,19 @@ jobs:
         github_token: ${{ secrets.GITHUB_TOKEN }}
         publish_dir: ./playwright-report
         keep_files: false
-        destination_dir: ./${{ github.run_id }}
+        destination_dir: ${{ github.run_id }}
     
     - name: Print test summary
       if: always()
       run: |
         echo "📊 Test Results Summary:"
-        echo "✅ Passed: ${{ steps.tests.outputs.passed || 0 }}"
-        echo "❌ Failed: ${{ steps.tests.outputs.failed || 0 }}"
-        echo "⏭️ Skipped: ${{ steps.tests.outputs.skipped || 0 }}"
-        echo "📊 Exit Code: ${{ steps.tests.outputs.exit_code || 0 }}"
+        echo "✅ Passed: ${{ steps.tests.outputs.passed }}"
+        echo "❌ Failed: ${{ steps.tests.outputs.failed }}"
+        echo "⏭️ Skipped: ${{ steps.tests.outputs.skipped }}"
+        echo "📊 Exit Code: ${{ steps.tests.outputs.exit_code }}"
         echo "📄 HTML Report: https://${{ github.repository_owner }}.github.io/${{ github.event.repository.name }}/${{ github.run_id }}/"
-        echo "🔗 Workflow Run: https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+        
+        # Fail the job if the tests failed so you get a red mark in GitHub UI
+        if [ "${{ steps.tests.outputs.exit_code }}" -ne "0" ]; then
+          exit 1
+        fi
