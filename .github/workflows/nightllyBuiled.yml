@@ -2,8 +2,10 @@ name: Enhanced Nightly Tests
 
 on:
   schedule:
-    # Adjust timezone and time (this runs at 11 PM UTC, which is 6 PM EST)
-    - cron: '0 23 * * *'
+    # Runs every minute for testing (remove this once confirmed working)
+    - cron: '* * * * *'
+    # Original nightly schedule (uncomment when ready)
+    # - cron: '0 23 * * *'
   workflow_dispatch:
     inputs:
       testType:
@@ -47,6 +49,10 @@ jobs:
           echo "passed=$PASSED" >> $GITHUB_OUTPUT
           echo "failed=$FAILED" >> $GITHUB_OUTPUT
           echo "skipped=$SKIPPED" >> $GITHUB_OUTPUT
+        else
+          echo "passed=0" >> $GITHUB_OUTPUT
+          echo "failed=0" >> $GITHUB_OUTPUT
+          echo "skipped=0" >> $GITHUB_OUTPUT
         fi
     
     - name: Archive test results
@@ -58,6 +64,7 @@ jobs:
           playwright-report/
           test-results.json
           test-results.xml
+        retention-days: 7
     
     - name: Deploy HTML report to GitHub Pages
       if: always()
@@ -66,57 +73,15 @@ jobs:
         github_token: ${{ secrets.GITHUB_TOKEN }}
         publish_dir: ./playwright-report
         keep_files: false
+        destination_dir: ./${{ github.run_id }}
     
-    - name: Send detailed email report
+    - name: Print test summary
       if: always()
-      uses: dawidd6/action-send-mail@v3
-      with:
-        server_address: smtp.gmail.com
-        server_port: 587
-        username: ${{ secrets.EMAIL_USERNAME }}
-        password: ${{ secrets.EMAIL_PASSWORD }}
-        secure: true
-        to: mbrakaz@gmail.com
-        subject: "[${{ job.status }}] Nightly Tests: ${{ steps.tests.outputs.passed || 0 }} passed, ${{ steps.tests.outputs.failed || 0 }} failed"
-        html_body: |
-          <!DOCTYPE html>
-          <html>
-          <head>
-            <style>
-              body { font-family: Arial, sans-serif; margin: 20px; }
-              .success { color: green; }
-              .failure { color: red; }
-              .card { border: 1px solid #ddd; padding: 15px; margin: 10px 0; border-radius: 5px; }
-            </style>
-          </head>
-          <body>
-            <h2>🚀 Nightly Test Report</h2>
-            
-            <div class="card">
-              <h3>Summary</h3>
-              <p><strong>Repository:</strong> ${{ github.repository }}</p>
-              <p><strong>Status:</strong> <span class="${{ job.status == 'success' && 'success' || 'failure' }}">${{ job.status | upper }}</span></p>
-              <p><strong>Test Results:</strong> ✅ ${{ steps.tests.outputs.passed || 0 }} passed | ❌ ${{ steps.tests.outputs.failed || 0 }} failed | ⏭️ ${{ steps.tests.outputs.skipped || 0 }} skipped</p>
-              <p><strong>Run ID:</strong> ${{ github.run_id }}</p>
-              <p><strong>Branch:</strong> ${{ github.ref_name }}</p>
-            </div>
-            
-            <div class="card">
-              <h3>📊 Reports</h3>
-              <ul>
-                <li><a href="https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}">GitHub Actions Run</a></li>
-                <li><a href="https://${{ github.repository_owner }}.github.io/${{ github.event.repository.name }}/">HTML Test Report</a></li>
-                <li><a href="https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}/artifacts">Download Artifacts</a></li>
-              </ul>
-            </div>
-            
-            <div class="card">
-              <h3>📅 Schedule Info</h3>
-              <p>This test runs daily at 11 PM UTC (6 PM EST)</p>
-              <p>Next run: Approximately 24 hours from now</p>
-            </div>
-            
-            <hr>
-            <p><em>This is an automated report from GitHub Actions.</em></p>
-          </body>
-          </html>
+      run: |
+        echo "📊 Test Results Summary:"
+        echo "✅ Passed: ${{ steps.tests.outputs.passed || 0 }}"
+        echo "❌ Failed: ${{ steps.tests.outputs.failed || 0 }}"
+        echo "⏭️ Skipped: ${{ steps.tests.outputs.skipped || 0 }}"
+        echo "📊 Exit Code: ${{ steps.tests.outputs.exit_code || 0 }}"
+        echo "📄 HTML Report: https://${{ github.repository_owner }}.github.io/${{ github.event.repository.name }}/${{ github.run_id }}/"
+        echo "🔗 Workflow Run: https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}"
