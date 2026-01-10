@@ -1,0 +1,95 @@
+name: Playwright Tests on Demand
+
+on:
+  # Manual trigger from GitHub UI
+  workflow_dispatch:
+    inputs:
+      branch:
+        description: 'Select branch to test'
+        required: true
+        default: 'main'
+        type: choice
+        options:
+          - main
+          - master
+          - develop
+        # You can dynamically populate this list with a script if needed
+      environment:
+        description: 'Environment to run tests against'
+        required: false
+        default: 'staging'
+        type: choice
+        options:
+          - staging
+          - production
+          - development
+      run-all-tests:
+        description: 'Run all tests?'
+        required: false
+        default: 'false'
+        type: boolean
+
+  # Keep existing triggers for automated runs
+  push:
+    branches: [ main, master ]
+  pull_request:
+    branches: [ main, master ]
+
+jobs:
+  test:
+    timeout-minutes: 60
+    runs-on: ubuntu-latest
+    
+    # Display the input values in the job name for clarity
+    name: Playwright Tests (Branch: ${{ github.event.inputs.branch || github.ref_name }})
+    
+    steps:
+    - name: Checkout selected branch
+      uses: actions/checkout@v4
+      with:
+        ref: ${{ github.event.inputs.branch || github.ref }}
+        
+    - name: Setup Node.js
+      uses: actions/setup-node@v4
+      with:
+        node-version: lts/*
+        cache: 'npm'
+        
+    - name: Install dependencies
+      run: npm ci
+      
+    - name: Install Playwright Browsers
+      run: npx playwright install --with-deps
+      
+    - name: Determine test command
+      id: test-command
+      run: |
+        if [ "${{ github.event.inputs.run-all-tests }}" = "true" ]; then
+          echo "command=npx playwright test" >> $GITHUB_OUTPUT
+        else
+          echo "command=npx playwright test --grep=@smoke" >> $GITHUB_OUTPUT
+        fi
+        
+    - name: Run Playwright tests
+      run: ${{ steps.test-command.outputs.command }}
+      env:
+        ENVIRONMENT: ${{ github.event.inputs.environment || 'staging' }}
+        # Add other environment variables as needed
+        
+    - name: Upload test results
+      if: always()
+      uses: actions/upload-artifact@v4
+      with:
+        name: playwright-report-${{ github.run_id }}
+        path: |
+          playwright-report/
+          test-results/
+        retention-days: 30
+        
+    - name: Upload HTML report
+      if: always()
+      uses: actions/upload-artifact@v4
+      with:
+        name: playwright-html-report-${{ github.run_id }}
+        path: playwright-report/
+        retention-days: 30
