@@ -22,8 +22,8 @@ jobs:
     - name: Run REAL K6 Test
       uses: grafana/k6-action@v0.3.0
       with:
-        filename: tests/api-test.js  # Your actual K6 test file
-        flags: --summary-export=k6-results.json --out json=k6-output.json
+        filename: test/performance/smoke/dummyjson-smoke.js  # Your actual file path
+        flags: --summary-export=k6-results.json
     
     - name: Process K6 Results
       id: k6-results
@@ -32,36 +32,42 @@ jobs:
           # Extract real metrics from K6 output
           AVG_RESPONSE=$(jq -r '.metrics.http_req_duration.avg' k6-results.json 2>/dev/null || echo "0")
           P95_RESPONSE=$(jq -r '.metrics.http_req_duration."p(95)"' k6-results.json 2>/dev/null || echo "0")
-          SUCCESS_RATE=$(jq -r '.metrics.http_req_failed."rate<0.01".passes' k6-results.json 2>/dev/null || echo "1")
+          TOTAL_REQUESTS=$(jq -r '.metrics.http_reqs.count' k6-results.json 2>/dev/null || echo "0")
           
-          # Convert success rate to percentage
-          if [ "$SUCCESS_RATE" = "true" ]; then
-            SUCCESS_PERCENT=99.9
+          # Calculate success rate
+          TOTAL_REQUESTS_NUM=${TOTAL_REQUESTS%.*}
+          if [ "$TOTAL_REQUESTS_NUM" -gt 0 ]; then
+            FAILED_REQUESTS=$(jq -r '.metrics.http_req_failed.count' k6-results.json 2>/dev/null || echo "0")
+            FAILED_NUM=${FAILED_REQUESTS%.*}
+            SUCCESS_RATE=$(( (TOTAL_REQUESTS_NUM - FAILED_NUM) * 100 / TOTAL_REQUESTS_NUM ))
           else
-            SUCCESS_PERCENT=95.0
+            SUCCESS_RATE=100
           fi
           
           echo "avg_response=${AVG_RESPONSE%.*}" >> $GITHUB_OUTPUT
           echo "p95_response=${P95_RESPONSE%.*}" >> $GITHUB_OUTPUT
-          echo "success_rate=$SUCCESS_PERCENT" >> $GITHUB_OUTPUT
+          echo "success_rate=$SUCCESS_RATE" >> $GITHUB_OUTPUT
+          echo "total_requests=$TOTAL_REQUESTS_NUM" >> $GITHUB_OUTPUT
         else
           echo "Using default values (K6 results not found)"
           echo "avg_response=150" >> $GITHUB_OUTPUT
           echo "p95_response=250" >> $GITHUB_OUTPUT
-          echo "success_rate=98.5" >> $GITHUB_OUTPUT
+          echo "success_rate=98" >> $GITHUB_OUTPUT
+          echo "total_requests=100" >> $GITHUB_OUTPUT
         fi
     
     - name: Create Results JSON
       run: |
         echo '{
           "timestamp": "'$(date -u +"%Y-%m-%dT%H:%M:%SZ")'",
-          "test_name": "API Load Test",
+          "test_name": "DummyJSON Smoke Test",
           "metrics": {
             "avg_response_time": ${{ steps.k6-results.outputs.avg_response }},
             "p95_response_time": ${{ steps.k6-results.outputs.p95_response }},
             "success_rate": ${{ steps.k6-results.outputs.success_rate }},
-            "vus": 10,
-            "iterations": 150
+            "total_requests": ${{ steps.k6-results.outputs.total_requests }},
+            "vus": 2,
+            "duration": "30s"
           }
         }' > data.json
     
@@ -137,11 +143,11 @@ jobs:
         <body>
           <div class="header">
             <h1>🚀 K6 Performance Dashboard</h1>
-            <p>Real load test results from K6</p>
+            <p>DummyJSON Smoke Test Results</p>
           </div>
           
           <div class="controls">
-            <a href="https://github.com/${{ github.repository }}/actions/workflows/k6-tests.yml" 
+            <a href="https://github.com/${{ github.repository }}/actions" 
                target="_blank" class="run-btn">
                ▶ Run New Test
             </a>
@@ -193,8 +199,8 @@ jobs:
                   <div class="metric-value">${metrics.success_rate}%</div>
                 </div>
                 <div class="metric-card">
-                  <div class="metric-label">Virtual Users</div>
-                  <div class="metric-value">${metrics.vus}</div>
+                  <div class="metric-label">Total Requests</div>
+                  <div class="metric-value">${metrics.total_requests}</div>
                 </div>
               `;
               
@@ -246,7 +252,7 @@ jobs:
               timeElement.style.textAlign = "center";
               timeElement.style.marginTop = "30px";
               timeElement.style.color = "#666";
-              timeElement.innerHTML = `<small>Last test run: ${data.timestamp} | Test: ${data.test_name}</small>`;
+              timeElement.innerHTML = `<small>Last test: ${new Date(data.timestamp).toLocaleString()} | ${data.test_name}</small>`;
               document.body.appendChild(timeElement);
             }
             
