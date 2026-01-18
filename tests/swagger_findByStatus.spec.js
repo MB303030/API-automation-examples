@@ -1,6 +1,11 @@
 import { test, expect } from '@playwright/test';
 import findByStatusResponse from '../test-data/findByStatusResponse.json' assert { type: 'json' };
-import { findByStatusEndpoint, storeInventoryEndpoint, apiGet } from '../utils/env.js';
+
+// ✅ ENDPOINTS from endpoints.js
+import { findByStatusEndpoint, storeInventoryEndpoint } from '../utils/endpoints.js';
+
+// ✅ REQUEST HELPER from NEW request.js file
+import { apiGet } from '../utils/request.js';  // Changed from env.js to request.js
 
 test.describe('API verification example', () => {
 
@@ -53,7 +58,6 @@ test.describe('API verification example', () => {
     } else {
       expect(Object.keys(inventory).length).toBeGreaterThan(0);
     }
-    
   });
 
 });

@@ -3,7 +3,6 @@ import defaultsPut from './postmanInfoPut.json' assert { type: 'json' };
 
 /**
  * Create POST /info payload with optional overrides.
- * - starts from defaultsPost and merges allowed nested/top-level overrides.
  */
 export function createPostmanInfo(overrides = {}) {
   const result = { ...defaultsPost };
@@ -21,7 +20,6 @@ export function createPostmanInfo(overrides = {}) {
 
 /**
  * Create PUT /info payload with optional overrides.
- * - starts from defaultsPut and merges allowed nested/top-level overrides.
  */
 export function createPostmanInfoPut(overrides = {}) {
   const result = { ...defaultsPut };
