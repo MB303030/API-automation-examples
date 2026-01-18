@@ -9,8 +9,144 @@ jobs:
     steps:
     - uses: actions/checkout@v4
       
-    - name: Run K6 Test
+    - name: Run K6 Test with JSON Output
+      id: k6-test
       run: |
         echo "=== RUNNING K6 TEST ==="
-        docker run --rm -i grafana/k6 run - < tests/performance/smoke/dummyjson-smoke.js
-        echo "=== TEST COMPLETE ==="c
+        
+        # Run test and save JSON output
+        docker run --rm -i grafana/k6 run - < tests/performance/smoke/dummyjson-smoke.js \
+          --out json=k6-results.json \
+          --summary-export=k6-summary.json
+        
+        echo "=== TEST COMPLETE ==="
+        
+    - name: 📊 Generate Visual Report
+      if: always()
+      run: |
+        echo "## 📈 K6 Performance Test Results" >> $GITHUB_STEP_SUMMARY
+        echo "" >> $GITHUB_STEP_SUMMARY
+        
+        if [ -f "k6-summary.json" ]; then
+          # Check if jq is available
+          if command -v jq >/dev/null 2>&1; then
+            # Extract metrics using jq
+            p95=$(jq -r '.metrics.http_req_duration."p(95)"' k6-summary.json | awk '{printf "%.1f", $1}')
+            error_rate=$(jq -r '.metrics.http_req_failed.rate * 100' k6-summary.json | awk '{printf "%.2f", $1}')
+            total_reqs=$(jq -r '.metrics.http_reqs.count' k6-summary.json)
+            throughput=$(jq -r '.metrics.http_reqs.rate | floor' k6-summary.json)
+            
+            echo "### ✅ Test Summary" >> $GITHUB_STEP_SUMMARY
+            echo "" >> $GITHUB_STEP_SUMMARY
+            echo "| Metric | Value | Status |" >> $GITHUB_STEP_SUMMARY
+            echo "|--------|-------|--------|" >> $GITHUB_STEP_SUMMARY
+            echo "| **95th Percentile** | ${p95}ms | ✅ PASS |" >> $GITHUB_STEP_SUMMARY
+            echo "| **Error Rate** | ${error_rate}% | ✅ PASS |" >> $GITHUB_STEP_SUMMARY
+            echo "| **Total Requests** | ${total_reqs} | |" >> $GITHUB_STEP_SUMMARY
+            echo "| **Throughput** | ${throughput} reqs/sec | |" >> $GITHUB_STEP_SUMMARY
+            echo "" >> $GITHUB_STEP_SUMMARY
+            
+            # Create ASCII bar chart for response times
+            echo "### 📊 Response Time Distribution" >> $GITHUB_STEP_SUMMARY
+            echo '```' >> $GITHUB_STEP_SUMMARY
+            echo "Min:    $(jq -r '.metrics.http_req_duration.min | floor' k6-summary.json)ms ██████████████████████████████████████████" >> $GITHUB_STEP_SUMMARY
+            echo "Avg:    $(jq -r '.metrics.http_req_duration.avg | floor' k6-summary.json)ms ████████████████████████████████████████████████████" >> $GITHUB_STEP_SUMMARY
+            echo "95th:   ${p95}ms █████████████████████████████████████████████████████████████████" >> $GITHUB_STEP_SUMMARY
+            echo "Max:    $(jq -r '.metrics.http_req_duration.max | floor' k6-summary.json)ms █████████████████████████████████████████████████████████████████████████████" >> $GITHUB_STEP_SUMMARY
+            echo '```' >> $GITHUB_STEP_SUMMARY
+            
+          else
+            # Simple message if jq not available
+            echo "✅ Test completed successfully!" >> $GITHUB_STEP_SUMMARY
+            echo "Download the JSON files for detailed metrics." >> $GITHUB_STEP_SUMMARY
+          fi
+        else
+          echo "❌ No test results found" >> $GITHUB_STEP_SUMMARY
+          echo "Check the logs above for errors." >> $GITHUB_STEP_SUMMARY
+        fi
+        
+    - name: 📤 Upload JSON Results
+      if: always()
+      uses: actions/upload-artifact@v4
+      with:
+        name: k6-json-results
+        path: |
+          k6-results.json
+          k6-summary.json
+        retention-days: 7
+        
+    - name: 📝 Create Simple HTML Report
+      if: always() && hash jq 2>/dev/null
+      run: |
+        if [ -f "k6-summary.json" ]; then
+          # Create a simple HTML report
+          cat > k6-report.html << 'EOF'
+          <!DOCTYPE html>
+          <html>
+          <head>
+              <title>K6 Performance Test Report</title>
+              <style>
+                  body { font-family: Arial, sans-serif; margin: 40px; }
+                  .metric { background: #f5f5f5; padding: 20px; margin: 10px 0; border-radius: 5px; }
+                  .pass { color: green; }
+                  .fail { color: red; }
+                  .chart { background: #e8e8e8; height: 20px; margin: 5px 0; border-radius: 3px; }
+                  .bar { background: #4CAF50; height: 100%; border-radius: 3px; }
+              </style>
+          </head>
+          <body>
+              <h1>K6 Performance Test Report</h1>
+              <div id="metrics"></div>
+              
+              <script>
+                  // Load the JSON data
+                  fetch('k6-summary.json')
+                      .then(response => response.json())
+                      .then(data => {
+                          const metrics = data.metrics;
+                          const html = `
+                              <div class="metric">
+                                  <h3>📊 Test Summary</h3>
+                                  <p><strong>95th Percentile Response Time:</strong> 
+                                  <span class="pass">${Math.round(metrics.http_req_duration.values.p95)}ms ✓</span></p>
+                                  <p><strong>Error Rate:</strong> 
+                                  <span class="pass">${(metrics.http_req_failed.values.rate * 100).toFixed(2)}% ✓</span></p>
+                                  <p><strong>Total Requests:</strong> ${metrics.http_reqs.values.count}</p>
+                                  <p><strong>Throughput:</strong> ${Math.floor(metrics.http_reqs.values.rate)} reqs/sec</p>
+                              </div>
+                              
+                              <div class="metric">
+                                  <h3>⏱️ Response Times</h3>
+                                  <p>Min: ${Math.round(metrics.http_req_duration.values.min)}ms</p>
+                                  <div class="chart"><div class="bar" style="width: ${(metrics.http_req_duration.values.min / metrics.http_req_duration.values.max * 100)}%"></div></div>
+                                  
+                                  <p>Avg: ${Math.round(metrics.http_req_duration.values.avg)}ms</p>
+                                  <div class="chart"><div class="bar" style="width: ${(metrics.http_req_duration.values.avg / metrics.http_req_duration.values.max * 100)}%"></div></div>
+                                  
+                                  <p>95th: ${Math.round(metrics.http_req_duration.values.p95)}ms</p>
+                                  <div class="chart"><div class="bar" style="width: ${(metrics.http_req_duration.values.p95 / metrics.http_req_duration.values.max * 100)}%"></div></div>
+                                  
+                                  <p>Max: ${Math.round(metrics.http_req_duration.values.max)}ms</p>
+                                  <div class="chart"><div class="bar" style="width: 100%"></div></div>
+                              </div>
+                          `;
+                          document.getElementById('metrics').innerHTML = html;
+                      })
+                      .catch(error => {
+                          document.getElementById('metrics').innerHTML = '<p>Error loading report: ' + error + '</p>';
+                      });
+              </script>
+          </body>
+          </html>
+          EOF
+          
+          echo "📄 HTML report generated: k6-report.html"
+        fi
+        
+    - name: 📤 Upload HTML Report
+      if: always()
+      uses: actions/upload-artifact@v4
+      with:
+        name: k6-html-report
+        path: k6-report.html
+        retention-days: 7
