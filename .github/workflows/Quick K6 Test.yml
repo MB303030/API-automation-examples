@@ -18,16 +18,14 @@ jobs:
         echo "## 📊 K6 Performance Test Report" >> $GITHUB_STEP_SUMMARY
         echo "" >> $GITHUB_STEP_SUMMARY
         
-        # Add Mermaid Chart
+        # Add Mermaid Chart - FIXED SYNTAX
         echo "### 📈 Load Pattern" >> $GITHUB_STEP_SUMMARY
         echo '```mermaid' >> $GITHUB_STEP_SUMMARY
-        cat << 'EOF' >> $GITHUB_STEP_SUMMARY
-xychart-beta
-    title "Virtual Users Over Time"
-    x-axis [0m, 1m, 2m, 3m, 5m, 6m, 7m]
-    y-axis "Users" 0 --> 120
-    line [0, 20, 50, 100, 100, 20, 0]
-EOF
+        echo 'xychart-beta' >> $GITHUB_STEP_SUMMARY
+        echo '    title "Virtual Users Over Time"' >> $GITHUB_STEP_SUMMARY
+        echo '    x-axis [0m, 1m, 2m, 3m, 5m, 6m, 7m]' >> $GITHUB_STEP_SUMMARY
+        echo '    y-axis "Users" 0 --> 120' >> $GITHUB_STEP_SUMMARY
+        echo '    line [0, 20, 50, 100, 100, 20, 0]' >> $GITHUB_STEP_SUMMARY
         echo '```' >> $GITHUB_STEP_SUMMARY
         echo "" >> $GITHUB_STEP_SUMMARY
         
