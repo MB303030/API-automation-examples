@@ -1,6 +1,5 @@
 import { test, expect } from '@playwright/test';
 
-// Import the ONE endpoint we created
 import { getProductsEndpoint } from '../../utils/config/endpoints.js';
 
 // Use our existing apiGet helper
