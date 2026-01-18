@@ -1,4 +1,4 @@
-name: Simple K6 Test
+name: K6 Performance Test
 
 on: workflow_dispatch
 
@@ -9,45 +9,103 @@ jobs:
     steps:
     - uses: actions/checkout@v4
       
-    - name: Run K6 and Save Output
+    - name: Run K6 Test
       run: |
-        echo "=== RUNNING K6 TEST ==="
+        echo "🚀 Starting K6 Performance Test..."
         
-        # Create directory for results
-        mkdir -p k6-results
+        # Run K6 using Docker
+        docker run --rm -i grafana/k6 run - < tests/performance/smoke/dummyjson-smoke.js 2>&1 | tee k6-output.txt
         
-        # Run K6 and capture ALL output
-        docker run --rm -i grafana/k6 run - < tests/performance/smoke/dummyjson-smoke.js 2>&1 | tee k6-results/full-output.txt
+        echo "✅ Test completed!"
         
-        echo "=== TEST COMPLETE ==="
-        
-    - name: Show Simple Report
+    - name: Create Readable Report
       if: always()
       run: |
-        echo "## 📊 K6 Test Results" >> $GITHUB_STEP_SUMMARY
+        echo "## 📊 K6 Performance Test Report" >> $GITHUB_STEP_SUMMARY
         echo "" >> $GITHUB_STEP_SUMMARY
         
-        if [ -f "k6-results/full-output.txt" ]; then
-          # Extract just the summary section
-          echo "### ✅ Test Completed" >> $GITHUB_STEP_SUMMARY
+        if [ -f "k6-output.txt" ]; then
+          echo "### 🧪 Test Information" >> $GITHUB_STEP_SUMMARY
+          echo "- **API:** DummyJSON Products" >> $GITHUB_STEP_SUMMARY
+          echo "- **URL:** https://dummyjson.com/products?limit=5&skip=10" >> $GITHUB_STEP_SUMMARY
+          echo "- **Load:** 2 virtual users for 30 seconds" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
           
-          # Get key metrics from output
-          echo "**Key Metrics:**" >> $GITHUB_STEP_SUMMARY
+          # Extract and display key metrics
+          echo "### 📈 Key Performance Metrics" >> $GITHUB_STEP_SUMMARY
+          
+          # Total iterations (requests)
+          ITERATIONS=$(grep "iterations.*:" k6-output.txt | tail -1 | awk '{print $2}' | tr -d ',')
+          echo "- **Total Requests:** $ITERATIONS" >> $GITHUB_STEP_SUMMARY
+          
+          # Requests per second
+          REQ_SEC=$(grep "http_reqs.*:" k6-output.txt | tail -1 | awk '{print $3}' | tr -d ',' | sed 's/.*\///')
+          echo "- **Throughput:** $REQ_SEC requests/second" >> $GITHUB_STEP_SUMMARY
+          
+          # Average response time
+          AVG_TIME=$(grep "http_req_duration.*avg=" k6-output.txt | tail -1 | awk -F'avg=' '{print $2}' | awk '{print $1}')
+          echo "- **Avg Response Time:** ${AVG_TIME}ms" >> $GITHUB_STEP_SUMMARY
+          
+          # P95 response time
+          P95_TIME=$(grep "http_req_duration.*p(95)=" k6-output.txt | tail -1 | awk -F'p\(95\)=' '{print $2}' | awk '{print $1}')
+          echo "- **P95 Response Time:** ${P95_TIME}ms (95% of requests were faster than this)" >> $GITHUB_STEP_SUMMARY
+          
+          # Success rate
+          if grep -q "checks_succeeded" k6-output.txt; then
+            SUCCESS_RATE=$(grep "checks_succeeded" k6-output.txt | awk '{print $2}' | tr -d ',')
+            echo "- **Success Rate:** $SUCCESS_RATE" >> $GITHUB_STEP_SUMMARY
+          fi
+          
+          # Failed requests
+          FAILED_RATE=$(grep "http_req_failed.*:" k6-output.txt | tail -1 | awk '{print $2}' | tr -d ',')
+          echo "- **Failure Rate:** $FAILED_RATE" >> $GITHUB_STEP_SUMMARY
+          
+          echo "" >> $GITHUB_STEP_SUMMARY
+          
+          # Check results
+          echo "### ✅ Checks (Validation Tests)" >> $GITHUB_STEP_SUMMARY
+          grep -A5 "▀ status is 200" k6-output.txt | sed 's/^/    /' >> $GITHUB_STEP_SUMMARY 2>/dev/null || echo "    No check details found" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          
+          # Show thresholds
+          echo "### 🎯 Threshold Results" >> $GITHUB_STEP_SUMMARY
+          grep -A5 "█ THRESHOLDS" k6-output.txt | sed 's/^/    /' >> $GITHUB_STEP_SUMMARY 2>/dev/null || echo "    No threshold details found" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          
+          # Performance Analysis
+          echo "### 🔍 Performance Analysis" >> $GITHUB_STEP_SUMMARY
+          if [[ "$FAILED_RATE" > "0.50" ]]; then
+            echo "❌ **ISSUE DETECTED:** High failure rate ($FAILED_RATE)" >> $GITHUB_STEP_SUMMARY
+            echo "   - API is responding fast but with incorrect data" >> $GITHUB_STEP_SUMMARY
+            echo "   - Check why 200 status or product data is not returned" >> $GITHUB_STEP_SUMMARY
+          else
+            echo "✅ **GOOD:** Low failure rate" >> $GITHUB_STEP_SUMMARY
+          fi
+          
+          if [[ "${AVG_TIME%.*}" -lt 100 ]]; then
+            echo "✅ **EXCELLENT:** Fast response time (${AVG_TIME}ms)" >> $GITHUB_STEP_SUMMARY
+          elif [[ "${AVG_TIME%.*}" -lt 500 ]]; then
+            echo "⚠️ **ACCEPTABLE:** Moderate response time (${AVG_TIME}ms)" >> $GITHUB_STEP_SUMMARY
+          else
+            echo "❌ **SLOW:** High response time (${AVG_TIME}ms)" >> $GITHUB_STEP_SUMMARY
+          fi
+          
+          echo "" >> $GITHUB_STEP_SUMMARY
+          
+          # Full output for reference
+          echo "### 📋 Full Test Output" >> $GITHUB_STEP_SUMMARY
+          echo '```' >> $GITHUB_STEP_SUMMARY
+          tail -50 k6-output.txt >> $GITHUB_STEP_SUMMARY
           echo '```' >> $GITHUB_STEP_SUMMARY
           
-          # Show last 20 lines (the summary)
-          tail -20 k6-results/full-output.txt >> $GITHUB_STEP_SUMMARY
-          
-          echo '```' >> $GITHUB_STEP_SUMMARY
         else
-          echo "❌ No output found" >> $GITHUB_STEP_SUMMARY
+          echo "❌ No test output found. Check if K6 ran correctly." >> $GITHUB_STEP_SUMMARY
         fi
         
-    - name: Upload Results
+    - name: Upload Detailed Results
       if: always()
       uses: actions/upload-artifact@v4
       with:
-        name: k6-results
-        path: k6-results/
-        retention-days: 7
+        name: k6-performance-results
+        path: k6-output.txt
+        retention-days: 30
