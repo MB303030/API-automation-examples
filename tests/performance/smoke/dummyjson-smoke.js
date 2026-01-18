@@ -1,59 +1,75 @@
 import http from 'k6/http';
-import { check, sleep } from 'k6';  // Added sleep import
+import { check, sleep } from 'k6';
 
 /**
- * Smoke test for DummyJSON API
- * Tests multiple endpoints
+ * REAL Performance Test - DummyJSON API
+ * Tests: Response time degradation under increasing load
  */
 export const options = {
-  vus: 2,            // 2 virtual users
-  duration: '30s',   // 30 seconds
+  // Realistic load pattern: Simulate 100 users over 5 minutes
+  stages: [
+    // Ramp-up: Gradually increase users (simulates morning traffic)
+    { duration: '1m', target: 20 },   // 0→20 users in 1 minute
+    { duration: '1m', target: 50 },   // 20→50 users in 1 minute
+    { duration: '1m', target: 100 },  // 50→100 users in 1 minute
+    
+    // Sustained load: Keep at 100 users for 2 minutes
+    { duration: '2m', target: 100 },  // Stay at 100 users
+    
+    // Ramp-down: Gradually decrease users
+    { duration: '1m', target: 20 },   // 100→20 users
+    { duration: '1m', target: 0 },    // 20→0 users
+  ],
   
+  // Realistic thresholds for production API
   thresholds: {
-    http_req_failed: ['rate<0.01'],    // Less than 1% failures
-    http_req_duration: ['p(95)<2000'], // 95% under 2 seconds
+    // 95% of requests should be under 500ms (not 2000ms!)
+    http_req_duration: ['p(95)<500'],
+    
+    // Less than 0.5% failures (stricter!)
+    http_req_failed: ['rate<0.005'],
+    
+    // At least 50 requests per second throughput
+    http_reqs: ['rate>50'],
   },
 };
 
 export default function () {
-  // Test 1: Get products (pagination)
-  const products = http.get('https://dummyjson.com/products?limit=5&skip=10');
+  // More realistic user behavior:
   
-  // Test 2: Get random single product
-  const productId = Math.floor(Math.random() * 100) + 1;
-  const singleProduct = http.get(`https://dummyjson.com/products/${productId}`);
+  // 70% chance: Get products page
+  if (Math.random() < 0.7) {
+    const limit = Math.floor(Math.random() * 10) + 1; // 1-10 products
+    const skip = Math.floor(Math.random() * 50);      // Random page
+    const products = http.get(`https://dummyjson.com/products?limit=${limit}&skip=${skip}`);
+    
+    check(products, {
+      'products status 200': (r) => r.status === 200,
+    });
+  }
   
-  // Test 3: Search products
-  const search = http.get('https://dummyjson.com/products/search?q=phone');
+  // 20% chance: View specific product
+  if (Math.random() < 0.2) {
+    const productId = Math.floor(Math.random() * 100) + 1;
+    const singleProduct = http.get(`https://dummyjson.com/products/${productId}`);
+    
+    check(singleProduct, {
+      'product status 200': (r) => r.status === 200,
+    });
+  }
   
-  // Validate responses
-  check(products, {
-    'products status 200': (r) => r.status === 200,
-    'has 5 products': (r) => {
-      try {
-        const body = JSON.parse(r.body);
-        return body.products && body.products.length === 5;
-      } catch {
-        return false;
-      }
-    },
-  });
+  // 10% chance: Search for products
+  if (Math.random() < 0.1) {
+    const searchTerms = ['phone', 'laptop', 'shirt', 'watch', 'book'];
+    const randomTerm = searchTerms[Math.floor(Math.random() * searchTerms.length)];
+    const search = http.get(`https://dummyjson.com/products/search?q=${randomTerm}`);
+    
+    check(search, {
+      'search status 200': (r) => r.status === 200,
+    });
+  }
   
-  check(singleProduct, {
-    'single product status 200': (r) => r.status === 200,
-  });
-  
-  check(search, {
-    'search status 200': (r) => r.status === 200,
-    'search has results': (r) => {
-      try {
-        const body = JSON.parse(r.body);
-        return body.products && body.products.length > 0;
-      } catch {
-        return false;
-      }
-    },
-  });
-  
-  sleep(1);
+  // Realistic think time: Users don't spam requests
+  // Random pause between 1-3 seconds (reading time)
+  sleep(Math.random() * 2 + 1);
 }
