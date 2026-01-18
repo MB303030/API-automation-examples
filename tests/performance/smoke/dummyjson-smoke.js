@@ -55,5 +55,5 @@ export default function () {
     },
   });
   
-  sleep(1); // Wait 1 second between iterations
+  sleep(1);
 }
