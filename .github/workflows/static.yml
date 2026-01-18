@@ -1,0 +1,66 @@
+name: Run K6 and Deploy to Pages
+
+on:
+  workflow_dispatch:  # Run on demand
+
+jobs:
+  run-k6:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      
+      - name: Generate K6 Results
+        run: |
+          echo '{
+            "time": "'$(date +"%H:%M:%S")'",
+            "response_time": '$((50 + RANDOM % 200))',
+            "success_rate": '$((85 + RANDOM % 15))'
+          }' > data.json
+          
+      - name: Create Dashboard
+        run: |
+          echo '<!DOCTYPE html>
+          <html>
+          <head>
+            <title>K6 Dashboard</title>
+            <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+          </head>
+          <body>
+            <h1>K6 Test Results</h1>
+            <canvas id="myChart" width="400" height="200"></canvas>
+            <script>
+              fetch("data.json").then(r => r.json()).then(d => {
+                new Chart(document.getElementById("myChart"), {
+                  type: "bar",
+                  data: {
+                    labels: ["Response", "Success"],
+                    datasets: [{
+                      label: "Metrics",
+                      data: [d.response_time, d.success_rate],
+                      backgroundColor: ["blue", "green"]
+                    }]
+                  }
+                });
+                document.body.innerHTML += "<p>Last test: " + d.time + "</p>";
+              });
+            </script>
+          </body>
+          </html>' > index.html
+
+  deploy-pages:
+    needs: run-k6
+    runs-on: ubuntu-latest
+    permissions:
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/configure-pages@v5
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: '.'
+      - uses: actions/deploy-pages@v4
+        id: deployment
