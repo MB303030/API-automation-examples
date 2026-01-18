@@ -1,0 +1,16 @@
+name: Quick K6 Test
+
+on: workflow_dispatch
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    
+    steps:
+    - uses: actions/checkout@v4
+      
+    - name: Run K6 Test
+      run: |
+        echo "=== RUNNING K6 TEST ==="
+        docker run --rm -i grafana/k6 run - < tests/performance/smoke/dummyjson-smoke.js
+        echo "=== TEST COMPLETE ==="c
