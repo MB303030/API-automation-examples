@@ -1,73 +1,70 @@
-# API Testing with Playwright
 
-Simple API testing framework using Playwright to demonstrate automation skills across multiple public APIs.
-
-## 📦 Installation
+**To create it:**
 
 ```bash
+# Save the minimal README
+cat > README.md << 'EOF'
+# API Testing Project
+
+API automation framework using Playwright for functional testing and K6 for performance testing.
+
+## 🚀 Quick Start
+
+\`\`\`bash
 # Install dependencies
 npm install
 
-# Install Playwright browsers
-npx playwright install
-
-RUN TEST:
-# Run all tests
-npx playwright test
-
-# Run specific test file
-npx playwright test tests/petstore.spec.js
+# Run all functional tests
+npm test
 
 # Run with UI mode
-npx playwright test --ui
+npm run test:ui
 
-# Run with report
-npx playwright test --reporter=html
+# View HTML report
+npm run test:report
+\`\`\`
 
-APIs Tested
-1. Petstore API (Swagger)
-Base URL: https://petstore.swagger.io/v2
+## 📡 APIs Tested
 
-Endpoints:
+- **PetStore API**: \`https://petstore.swagger.io/v2\`
+- **Postman Echo API**: \`https://template.postman-echo.com\`
+- **DummyJSON API**: \`https://dummyjson.com\`
 
-GET /pet/findByStatus - Find pets by status
+## 📁 Project Structure
 
-GET /store/inventory - Get store inventory
+\`\`\`
+tests/
+├── api/              # Playwright functional tests
+├── performance/      # K6 performance tests
+└── fixtures/         # Test data
 
-Authentication: API key in header
+utils/
+├── config/          # Environment & endpoints
+└── core/            # Request helpers & headers
+\`\`\`
 
-2. Postman Echo API
-Base URL: https://template.postman-echo.com
+## 🔧 Available Scripts
 
-Endpoints:
+\`\`\`bash
+npm test                    # Run all functional tests
+npm run test:ui            # Run tests with UI mode
+npm run test:report        # Show HTML report
+npm run test:debug         # Run in debug mode
+npm run test:dummyjson     # Run DummyJSON tests only
+npm run test:postman       # Run Postman tests only
+npm run test:petstore      # Run PetStore tests only
+\`\`\`
 
-POST /info - Create resource
+## 🏃 CI/CD
 
-PUT /info?id=:id - Update resource
+Tests run automatically on GitHub Actions:
+- Functional tests run on every push
+- Performance tests run weekly on CI only
 
-DELETE /info?id=:id - Delete resource
+Check \`.github/workflows/\` for CI configuration.
 
-Features: Echoes back request data for validation
+## 📝 Notes
 
-3. DummyJSON API
-Base URL: https://dummyjson.com
-
-Endpoints:
-
-GET /products/:id - Get product details
-
-POST /products/add - Create product
-
-PUT /products/:id - Update product
-
-DELETE /products/:id - Delete product
-
-POST /auth/login - User authentication
-
-Configuration
-Environment variables can be set in .env file:
-
-env
-API_PET_BASE=https://petstore.swagger.io/v2
-API_POSTMAN_BASE=https://template.postman-echo.com
-API_KEY=your-api-key-here
+- Performance tests require Docker and run only on CI
+- Environment variables can be set in \`.env\` file
+- Test fixtures are stored in \`tests/fixtures/\`
