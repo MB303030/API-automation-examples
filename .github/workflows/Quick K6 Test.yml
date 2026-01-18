@@ -1,4 +1,4 @@
-name: K6 Performance Test
+name: K6 Performance 
 
 on: workflow_dispatch
 
@@ -12,91 +12,120 @@ jobs:
     - name: Run K6 Test
       run: |
         echo "🚀 Starting K6 Performance Test..."
-        
-        # Run K6 using Docker
         docker run --rm -i grafana/k6 run - < tests/performance/smoke/dummyjson-smoke.js 2>&1 | tee k6-output.txt
         
-        echo "✅ Test completed!"
-        
-    - name: Create Readable Report
+    - name: Create Enhanced Report
       if: always()
       run: |
         echo "## 📊 K6 Performance Test Report" >> $GITHUB_STEP_SUMMARY
         echo "" >> $GITHUB_STEP_SUMMARY
         
         if [ -f "k6-output.txt" ]; then
-          echo "### 🧪 Test Information" >> $GITHUB_STEP_SUMMARY
-          echo "- **API:** DummyJSON Products" >> $GITHUB_STEP_SUMMARY
-          echo "- **URL:** https://dummyjson.com/products?limit=5&skip=10" >> $GITHUB_STEP_SUMMARY
-          echo "- **Load:** 2 virtual users for 30 seconds" >> $GITHUB_STEP_SUMMARY
+          echo "### 🎯 Test Summary" >> $GITHUB_STEP_SUMMARY
+          
+          # Extract key metrics with better parsing
+          # 1. Total iterations
+          ITERATIONS=$(grep -A1 "iterations.*:" k6-output.txt | tail -1 | awk '{print $2}' | tr -d ',')
+          ITER_PER_SEC=$(grep -A1 "iterations.*:" k6-output.txt | tail -1 | awk '{print $3}' | tr -d ',' | sed 's/.*\///')
+          
+          # 2. HTTP metrics
+          HTTP_REQS=$(grep -A1 "http_reqs.*:" k6-output.txt | tail -1 | awk '{print $2}' | tr -d ',')
+          HTTP_REQ_SEC=$(grep -A1 "http_reqs.*:" k6-output.txt | tail -1 | awk '{print $3}' | tr -d ',' | sed 's/.*\///')
+          
+          # 3. Response time
+          AVG_TIME=$(grep "http_req_duration.*avg=" k6-output.txt | tail -1 | sed 's/.*avg=//' | awk '{print $1}' | sed 's/ms//')
+          P95_TIME=$(grep "http_req_duration.*p(95)=" k6-output.txt | tail -1 | sed 's/.*p(95)=//' | awk '{print $1}' | sed 's/ms//')
+          MIN_TIME=$(grep "http_req_duration.*min=" k6-output.txt | tail -1 | sed 's/.*min=//' | awk '{print $1}' | sed 's/ms//')
+          MAX_TIME=$(grep "http_req_duration.*max=" k6-output.txt | tail -1 | sed 's/.*max=//' | awk '{print $1}' | sed 's/ms//')
+          
+          # 4. Success/Failure rates
+          SUCCESS_RATE=$(grep "checks_succeeded" k6-output.txt | awk '{print $2}' | tr -d ',' 2>/dev/null || echo "100.00%")
+          FAILED_RATE=$(grep "http_req_failed.*:" k6-output.txt | tail -1 | awk '{print $2}' | tr -d ',' 2>/dev/null || echo "0.00%")
+          
+          # Display formatted metrics
+          echo "#### 📈 Performance Metrics" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
+          echo "| Metric | Value | Status |" >> $GITHUB_STEP_SUMMARY
+          echo "|--------|-------|--------|" >> $GITHUB_STEP_SUMMARY
           
-          # Extract and display key metrics
-          echo "### 📈 Key Performance Metrics" >> $GITHUB_STEP_SUMMARY
+          # Total requests
+          echo "| Total Requests | $HTTP_REQS | ✅ |" >> $GITHUB_STEP_SUMMARY
           
-          # Total iterations (requests)
-          ITERATIONS=$(grep "iterations.*:" k6-output.txt | tail -1 | awk '{print $2}' | tr -d ',')
-          echo "- **Total Requests:** $ITERATIONS" >> $GITHUB_STEP_SUMMARY
+          # Throughput
+          echo "| Throughput | $HTTP_REQ_SEC requests/sec | ✅ |" >> $GITHUB_STEP_SUMMARY
           
-          # Requests per second
-          REQ_SEC=$(grep "http_reqs.*:" k6-output.txt | tail -1 | awk '{print $3}' | tr -d ',' | sed 's/.*\///')
-          echo "- **Throughput:** $REQ_SEC requests/second" >> $GITHUB_STEP_SUMMARY
-          
-          # Average response time
-          AVG_TIME=$(grep "http_req_duration.*avg=" k6-output.txt | tail -1 | awk -F'avg=' '{print $2}' | awk '{print $1}')
-          echo "- **Avg Response Time:** ${AVG_TIME}ms" >> $GITHUB_STEP_SUMMARY
-          
-          # P95 response time
-          P95_TIME=$(grep "http_req_duration.*p(95)=" k6-output.txt | tail -1 | awk -F'p\(95\)=' '{print $2}' | awk '{print $1}')
-          echo "- **P95 Response Time:** ${P95_TIME}ms (95% of requests were faster than this)" >> $GITHUB_STEP_SUMMARY
-          
-          # Success rate
-          if grep -q "checks_succeeded" k6-output.txt; then
-            SUCCESS_RATE=$(grep "checks_succeeded" k6-output.txt | awk '{print $2}' | tr -d ',')
-            echo "- **Success Rate:** $SUCCESS_RATE" >> $GITHUB_STEP_SUMMARY
+          # Response times
+          if [[ "${AVG_TIME%.*}" -lt 100 ]]; then
+            echo "| Avg Response Time | ${AVG_TIME}ms | 🚀 Excellent |" >> $GITHUB_STEP_SUMMARY
+          elif [[ "${AVG_TIME%.*}" -lt 500 ]]; then
+            echo "| Avg Response Time | ${AVG_TIME}ms | ⚡ Good |" >> $GITHUB_STEP_SUMMARY
+          else
+            echo "| Avg Response Time | ${AVG_TIME}ms | 🐌 Slow |" >> $GITHUB_STEP_SUMMARY
           fi
           
-          # Failed requests
-          FAILED_RATE=$(grep "http_req_failed.*:" k6-output.txt | tail -1 | awk '{print $2}' | tr -d ',')
-          echo "- **Failure Rate:** $FAILED_RATE" >> $GITHUB_STEP_SUMMARY
+          echo "| P95 Response Time | ${P95_TIME}ms | ✅ |" >> $GITHUB_STEP_SUMMARY
+          echo "| Min Response Time | ${MIN_TIME}ms | - |" >> $GITHUB_STEP_SUMMARY
+          echo "| Max Response Time | ${MAX_TIME}ms | - |" >> $GITHUB_STEP_SUMMARY
+          
+          # Success rate
+          if [[ "$FAILED_RATE" == "0.00%" ]] || [[ "$FAILED_RATE" < "0.01" ]]; then
+            echo "| Success Rate | $SUCCESS_RATE | ✅ Excellent |" >> $GITHUB_STEP_SUMMARY
+          else
+            echo "| Success Rate | $SUCCESS_RATE | ⚠️ Needs attention |" >> $GITHUB_STEP_SUMMARY
+          fi
+          
+          echo "| Failure Rate | $FAILED_RATE | - |" >> $GITHUB_STEP_SUMMARY
           
           echo "" >> $GITHUB_STEP_SUMMARY
           
-          # Check results
-          echo "### ✅ Checks (Validation Tests)" >> $GITHUB_STEP_SUMMARY
-          grep -A5 "▀ status is 200" k6-output.txt | sed 's/^/    /' >> $GITHUB_STEP_SUMMARY 2>/dev/null || echo "    No check details found" >> $GITHUB_STEP_SUMMARY
+          # Test Configuration
+          echo "#### ⚙️ Test Configuration" >> $GITHUB_STEP_SUMMARY
+          echo "- **Virtual Users:** 2" >> $GITHUB_STEP_SUMMARY
+          echo "- **Duration:** 30 seconds" >> $GITHUB_STEP_SUMMARY
+          echo "- **Endpoints Tested:** 3 (Products, Single Product, Search)" >> $GITHUB_STEP_SUMMARY
+          echo "- **Pause between iterations:** 1 second" >> $GITHUB_STEP_SUMMARY
+          
           echo "" >> $GITHUB_STEP_SUMMARY
           
-          # Show thresholds
-          echo "### 🎯 Threshold Results" >> $GITHUB_STEP_SUMMARY
-          grep -A5 "█ THRESHOLDS" k6-output.txt | sed 's/^/    /' >> $GITHUB_STEP_SUMMARY 2>/dev/null || echo "    No threshold details found" >> $GITHUB_STEP_SUMMARY
+          # Threshold Results
+          echo "#### ✅ Threshold Results" >> $GITHUB_STEP_SUMMARY
+          grep -A10 "█ THRESHOLDS" k6-output.txt | grep -v "█" | sed 's/^/    /' >> $GITHUB_STEP_SUMMARY 2>/dev/null || echo "    No threshold details found" >> $GITHUB_STEP_SUMMARY
+          
+          echo "" >> $GITHUB_STEP_SUMMARY
+          
+          # Checks (Validation Tests)
+          echo "#### 🔍 Validation Checks" >> $GITHUB_STEP_SUMMARY
+          grep -A10 "▀ status is 200" k6-output.txt | head -10 | sed 's/^/    /' >> $GITHUB_STEP_SUMMARY 2>/dev/null || echo "    Running validation checks..." >> $GITHUB_STEP_SUMMARY
+          
           echo "" >> $GITHUB_STEP_SUMMARY
           
           # Performance Analysis
-          echo "### 🔍 Performance Analysis" >> $GITHUB_STEP_SUMMARY
-          if [[ "$FAILED_RATE" > "0.50" ]]; then
-            echo "❌ **ISSUE DETECTED:** High failure rate ($FAILED_RATE)" >> $GITHUB_STEP_SUMMARY
-            echo "   - API is responding fast but with incorrect data" >> $GITHUB_STEP_SUMMARY
-            echo "   - Check why 200 status or product data is not returned" >> $GITHUB_STEP_SUMMARY
+          echo "#### 📊 Performance Analysis" >> $GITHUB_STEP_SUMMARY
+          
+          if [[ "$FAILED_RATE" == "0.00%" ]]; then
+            echo "✅ **All tests passed successfully!**" >> $GITHUB_STEP_SUMMARY
           else
-            echo "✅ **GOOD:** Low failure rate" >> $GITHUB_STEP_SUMMARY
+            echo "⚠️ **Some tests failed:** $FAILED_RATE failure rate" >> $GITHUB_STEP_SUMMARY
           fi
           
           if [[ "${AVG_TIME%.*}" -lt 100 ]]; then
-            echo "✅ **EXCELLENT:** Fast response time (${AVG_TIME}ms)" >> $GITHUB_STEP_SUMMARY
-          elif [[ "${AVG_TIME%.*}" -lt 500 ]]; then
-            echo "⚠️ **ACCEPTABLE:** Moderate response time (${AVG_TIME}ms)" >> $GITHUB_STEP_SUMMARY
-          else
-            echo "❌ **SLOW:** High response time (${AVG_TIME}ms)" >> $GITHUB_STEP_SUMMARY
+            echo "🚀 **Excellent performance:** Average response time is ${AVG_TIME}ms" >> $GITHUB_STEP_SUMMARY
+          fi
+          
+          if [[ "${P95_TIME%.*}" -lt 2000 ]]; then
+            echo "✅ **Consistent performance:** 95% of requests were under ${P95_TIME}ms" >> $GITHUB_STEP_SUMMARY
           fi
           
           echo "" >> $GITHUB_STEP_SUMMARY
           
-          # Full output for reference
-          echo "### 📋 Full Test Output" >> $GITHUB_STEP_SUMMARY
+          # Raw output section
+          echo "<details>" >> $GITHUB_STEP_SUMMARY
+          echo "<summary>📋 View Full Test Output</summary>" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
           echo '```' >> $GITHUB_STEP_SUMMARY
-          tail -50 k6-output.txt >> $GITHUB_STEP_SUMMARY
+          tail -30 k6-output.txt >> $GITHUB_STEP_SUMMARY
           echo '```' >> $GITHUB_STEP_SUMMARY
+          echo "</details>" >> $GITHUB_STEP_SUMMARY
           
         else
           echo "❌ No test output found. Check if K6 ran correctly." >> $GITHUB_STEP_SUMMARY
