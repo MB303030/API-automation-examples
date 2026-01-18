@@ -5,7 +5,7 @@ import {
   postmanInfoEndpoint,
   postmanInfoPutEndpoint,
   postmanInfoDeleteEndpoint
-} from '../utils/endpoints.js';
+} from '../utils/config/endpoints.js';
 
 // ✅ REQUEST HELPERS from request.js
 import {

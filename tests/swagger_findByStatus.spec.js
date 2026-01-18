@@ -2,7 +2,7 @@ import { test, expect } from '@playwright/test';
 import findByStatusResponse from '../test-data/findByStatusResponse.json' assert { type: 'json' };
 
 // ✅ ENDPOINTS from endpoints.js
-import { findByStatusEndpoint, storeInventoryEndpoint } from '../utils/endpoints.js';
+import { findByStatusEndpoint, storeInventoryEndpoint } from '../utils/config/endpoints.js';
 
 // ✅ REQUEST HELPER from NEW request.js file
 import { apiGet } from '../utils/request.js';  // Changed from env.js to request.js
