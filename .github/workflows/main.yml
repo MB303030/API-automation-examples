@@ -8,7 +8,8 @@ on:
   workflow_dispatch:
 
 jobs:
-  api-tests:
+  # Job 1: Functional API tests with Playwright
+  playwright-tests:
     runs-on: ubuntu-latest
     
     steps:
@@ -24,71 +25,77 @@ jobs:
     - name: 📦 Install dependencies
       run: npm ci
 
-    - name: 🎭 Install Playwright (CI minimal)
+    - name: 🎭 Install Playwright
       run: npx playwright install chromium
 
     - name: 🔧 Setup API environment variables
       run: |
-        echo "API_KEY=ci-test-key-${{ github.run_id }}" >> $GITHUB_ENV
+        echo "API_KEY=test-key-${{ github.run_id }}" >> $GITHUB_ENV
         echo "API_PET_BASE=https://petstore.swagger.io/v2" >> $GITHUB_ENV
         echo "API_POSTMAN_BASE=https://template.postman-echo.com" >> $GITHUB_ENV
         echo "API_DUMMYJSON_BASE=https://dummyjson.com" >> $GITHUB_ENV
 
-    - name: 🧪 Run API tests with CI config
-      id: run-tests
-      run: |
-        echo "Running API tests with CI configuration..."
-        echo "Using config: playwright.ci.config.js"
-        
-        # Run tests and capture exit code
-        set +e  # Don't exit on error
-        npx playwright test --config=playwright.ci.config.js
-        TEST_EXIT_CODE=$?
-        set -e  # Restore exit on error
-        
-        echo "Playwright exit code: $TEST_EXIT_CODE"
-        echo "exit_code=$TEST_EXIT_CODE" >> $GITHUB_OUTPUT
-        
-        # Simple test file count (optional)
-        echo "Test files found:"
-        find tests -name "*.spec.js" | wc -l
+    - name: 🧪 Run Playwright API tests
+      run: npx playwright test
 
-    - name: 📊 Generate simple test summary
+    - name: 📤 Upload Playwright report
+      if: always()
+      uses: actions/upload-artifact@v4
+      with:
+        name: playwright-api-report
+        path: playwright-report/
+        retention-days: 7
+
+  # Job 2: Docker setup check (for K6)
+  docker-check:
+    runs-on: ubuntu-latest
+    needs: playwright-tests  # Run after functional tests pass
+    
+    steps:
+    - name: 📥 Checkout code
+      uses: actions/checkout@v4
+
+    - name: 🔍 Verify Docker installation
+      run: |
+        echo "Checking Docker availability..."
+        which docker || echo "Docker not found in PATH"
+        docker --version
+        echo "Docker check complete"
+
+  # Job 3: K6 Load tests (optional - runs on schedule or manual trigger)
+  k6-load-tests:
+    runs-on: ubuntu-latest
+    needs: docker-check
+    if: github.event_name == 'workflow_dispatch' || github.event_name == 'schedule'
+    
+    steps:
+    - name: 📥 Checkout code
+      uses: actions/checkout@v4
+
+    - name: 🐳 Run K6 load test
+      uses: grafana/k6-action@v0.3.1
+      with:
+        filename: tests/load/dummyjson-load-test.js
+        flags: --out json=test-results/k6-results.json
+      
+    - name: 📊 Generate K6 report
       if: always()
       run: |
-        echo "## 🧪 API Test Results" >> $GITHUB_STEP_SUMMARY
-        echo "" >> $GITHUB_STEP_SUMMARY
-        echo "**Workflow:** [${{ github.workflow }}](${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }})" >> $GITHUB_STEP_SUMMARY
-        echo "**Branch:** \`${{ github.ref_name }}\`" >> $GITHUB_STEP_SUMMARY
-        echo "**Commit:** [${{ github.sha }}](${{ github.server_url }}/${{ github.repository }}/commit/${{ github.sha }})" >> $GITHUB_STEP_SUMMARY
+        echo "## 📈 K6 Load Test Results" >> $GITHUB_STEP_SUMMARY
         echo "" >> $GITHUB_STEP_SUMMARY
         
-        # Simple status based on exit code
-        if [ "${{ steps.run-tests.outputs.exit_code }}" = "0" ]; then
-          echo "### ✅ All tests passed!" >> $GITHUB_STEP_SUMMARY
+        if [ -f "test-results/k6-results.json" ]; then
+          echo "### Load test completed successfully" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "Results saved to: test-results/k6-results.json" >> $GITHUB_STEP_SUMMARY
         else
-          echo "### ❌ Some tests failed" >> $GITHUB_STEP_SUMMARY
+          echo "### ⚠️ No K6 results found" >> $GITHUB_STEP_SUMMARY
         fi
-        
-        echo "" >> $GITHUB_STEP_SUMMARY
-        echo "### 📁 Available Reports" >> $GITHUB_STEP_SUMMARY
-        echo "- **Playwright HTML Report**: Download 'ci-test-artifacts' artifact and open `index.html`" >> $GITHUB_STEP_SUMMARY
-        echo "- **JUnit Results**: For CI integration" >> $GITHUB_STEP_SUMMARY
 
-    - name: 📤 Upload test artifacts
+    - name: 📤 Upload K6 results
       if: always()
       uses: actions/upload-artifact@v4
       with:
-        name: ci-test-artifacts
-        path: |
-          playwright-report/
-          test-results/
-        retention-days: 30
-
-    - name: 🚨 Upload JUnit test results
-      if: always()
-      uses: actions/upload-artifact@v4
-      with:
-        name: junit-results
-        path: test-results/junit.xml
+        name: k6-load-test-results
+        path: test-results/k6-results.json
         retention-days: 30
