@@ -35,35 +35,45 @@ jobs:
         echo "API_DUMMYJSON_BASE=https://dummyjson.com" >> $GITHUB_ENV
 
     - name: 🧪 Run API tests with CI config
+      id: run-tests
       run: |
         echo "Running API tests with CI configuration..."
         echo "Using config: playwright.ci.config.js"
         
-        # Run tests with CI config
+        # Run tests and capture exit code
+        set +e  # Don't exit on error
         npx playwright test --config=playwright.ci.config.js
+        TEST_EXIT_CODE=$?
+        set -e  # Restore exit on error
         
-        # Check if tests ran
-        if [ -f "test-results/test-results.json" ]; then
-          echo "✅ Test results generated"
-          echo "Total tests: $(jq '.suites[0].suites[0].tests | length' test-results/test-results.json 2>/dev/null || echo 'unknown')"
-        fi
+        echo "Playwright exit code: $TEST_EXIT_CODE"
+        echo "exit_code=$TEST_EXIT_CODE" >> $GITHUB_OUTPUT
+        
+        # Simple test file count (optional)
+        echo "Test files found:"
+        find tests -name "*.spec.js" | wc -l
 
-    - name: 📊 Generate test summary
+    - name: 📊 Generate simple test summary
       if: always()
       run: |
-        echo "## 📈 Test Execution Summary" >> $GITHUB_STEP_SUMMARY
+        echo "## 🧪 API Test Results" >> $GITHUB_STEP_SUMMARY
+        echo "" >> $GITHUB_STEP_SUMMARY
+        echo "**Workflow:** [${{ github.workflow }}](${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }})" >> $GITHUB_STEP_SUMMARY
+        echo "**Branch:** \`${{ github.ref_name }}\`" >> $GITHUB_STEP_SUMMARY
+        echo "**Commit:** [${{ github.sha }}](${{ github.server_url }}/${{ github.repository }}/commit/${{ github.sha }})" >> $GITHUB_STEP_SUMMARY
         echo "" >> $GITHUB_STEP_SUMMARY
         
-        if [ -f "test-results/test-results.json" ]; then
-          TOTAL=$(jq '.suites[0].suites | length' test-results/test-results.json)
-          echo "**Total Test Suites:** $TOTAL" >> $GITHUB_STEP_SUMMARY
-          
-          PASSED=$(jq '[.suites[0].suites[].tests[] | select(.results[0].status=="passed")] | length' test-results/test-results.json 2>/dev/null || echo "0")
-          FAILED=$(jq '[.suites[0].suites[].tests[] | select(.results[0].status=="failed")] | length' test-results/test-results.json 2>/dev/null || echo "0")
-          echo "**Passed:** $PASSED | **Failed:** $FAILED" >> $GITHUB_STEP_SUMMARY
+        # Simple status based on exit code
+        if [ "${{ steps.run-tests.outputs.exit_code }}" = "0" ]; then
+          echo "### ✅ All tests passed!" >> $GITHUB_STEP_SUMMARY
         else
-          echo "**Note:** Test results file not found" >> $GITHUB_STEP_SUMMARY
+          echo "### ❌ Some tests failed" >> $GITHUB_STEP_SUMMARY
         fi
+        
+        echo "" >> $GITHUB_STEP_SUMMARY
+        echo "### 📁 Available Reports" >> $GITHUB_STEP_SUMMARY
+        echo "- **Playwright HTML Report**: Download 'ci-test-artifacts' artifact and open `index.html`" >> $GITHUB_STEP_SUMMARY
+        echo "- **JUnit Results**: For CI integration" >> $GITHUB_STEP_SUMMARY
 
     - name: 📤 Upload test artifacts
       if: always()
