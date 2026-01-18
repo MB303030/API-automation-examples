@@ -1,0 +1,28 @@
+import { test, expect } from '@playwright/test';
+
+// Import the ONE endpoint we created
+import { getProductsEndpoint } from '../../utils/config/endpoints.js';
+
+// Use our existing apiGet helper
+import { apiGet } from '../../utils/core/request.js';
+
+test('Quick test - verify DummyJSON works with our utils', async ({ request }) => {
+  // Test the exact curl: limit=5, skip=10
+  const endpoint = getProductsEndpoint(5, 10);
+  console.log('Testing endpoint:', endpoint); // Debug logging
+  
+  const response = await apiGet(request, endpoint);
+  
+  // Just check status code first
+  expect(response.status()).toBe(200);
+  console.log('✅ Status code is 200');
+  
+  // Quick check of response structure
+  const body = await response.json();
+  console.log('Response keys:', Object.keys(body));
+  
+  // Very basic validation
+  expect(body).toHaveProperty('products');
+  expect(Array.isArray(body.products)).toBe(true);
+  console.log('✅ Basic structure is correct');
+});

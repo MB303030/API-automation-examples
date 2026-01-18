@@ -2,7 +2,8 @@
 const baseUrls = {
   pet: process.env.API_PET_BASE || 'https://petstore.swagger.io/v2',
   user: process.env.API_USER_BASE || 'https://user.service/v1',
-  postman: process.env.API_POSTMAN_BASE || 'https://template.postman-echo.com'
+  postman: process.env.API_POSTMAN_BASE || 'https://template.postman-echo.com',
+  dummyjson: process.env.API_DUMMYJSON_BASE || 'https://dummyjson.com'
 };
 
 // Backward compatibility

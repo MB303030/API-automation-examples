@@ -28,3 +28,10 @@ export function postmanInfoPutEndpoint(id = 1) {
 export function postmanInfoDeleteEndpoint(id = 12345) {
   return getApiUrl('postman', `/info?id=${encodeURIComponent(id)}`);
 }
+
+/* ─────────────────────────────
+   DUMMYJSON ENDPOINTS
+───────────────────────────── */
+export function getProductsEndpoint(limit = 30, skip = 0) {
+  return getApiUrl('dummyjson', `/products?limit=${limit}&skip=${skip}`);
+}
