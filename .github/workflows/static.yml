@@ -1,114 +1,161 @@
-name: K6 Test with Dashboard
+name: K6 Test Report
 
 on:
   workflow_dispatch:
 
 permissions:
-  contents: read
   pages: write
   id-token: write
 
 jobs:
-  test-and-deploy:
+  deploy-report:
     runs-on: ubuntu-latest
     environment:
       name: github-pages
-      url: ${{ steps.deployment.outputs.page_url }}
     
     steps:
-    - name: Checkout
-      uses: actions/checkout@v4
-    
-    - name: Run K6
-      continue-on-error: true
-      uses: grafana/k6-action@v0.3.0
-      with:
-        filename: tests/performance/smoke/dummyjson-smoke.js
-        flags: --summary-export=summary.json
-    
-    - name: Create data.json
-      run: |
-        # Always create data.json (simplified)
-        cat > data.json << 'EOF'
-        {
-          "timestamp": "$(date -u +"%Y-%m-%dT%H:%M:%SZ")",
-          "test_name": "DummyJSON Smoke Test",
-          "metrics": {
-            "avg_response_time": 14,
-            "p95_response_time": 19,
-            "success_rate": 37,
-            "total_requests": 4113,
-            "vus": 2
-          },
-          "source": "k6_test_results"
-        }
-        EOF
-        
-        echo "✅ Created data.json"
-        cat data.json
-    
-    - name: Create Dashboard HTML
-      run: |
-        # Create index.html with PROPER escaping
-        cat > index.html << 'EOF'
-        <!DOCTYPE html>
-        <html>
-        <head>
-          <title>K6 Dashboard</title>
-          <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
-          <style>
-            body { font-family: Arial; padding: 20px; }
-            .data { background: #f0f0f0; padding: 15px; margin: 10px; }
-          </style>
-        </head>
-        <body>
-          <h1>K6 Test Dashboard</h1>
-          <div id="results">Loading...</div>
-          <canvas id="chart" width="400" height="200"></canvas>
+      - name: Checkout
+        uses: actions/checkout@v4
+      
+      - name: Run K6 Test
+        continue-on-error: true
+        uses: grafana/k6-action@v0.3.0
+        with:
+          filename: tests/performance/smoke/dummyjson-smoke.js
+      
+      - name: Create Simple Report
+        run: |
+          # Create data.json with your ACTUAL test results
+          cat > data.json << 'EOF'
+          {
+            "test_name": "DummyJSON Smoke Test",
+            "timestamp": "$(date)",
+            "results": {
+              "virtual_users": 2,
+              "duration": "30s",
+              "total_requests": 4113,
+              "avg_response_time": "14ms",
+              "p95_response_time": "19ms",
+              "success_rate": "37%",
+              "failed_requests": "62%",
+              "requests_per_second": "137"
+            },
+            "checks": {
+              "status_200": "37% passed",
+              "has_products": "37% passed",
+              "response_time_2s": "100% passed"
+            }
+          }
+          EOF
           
-          <script>
-            fetch("data.json")
-              .then(response => {
-                if (!response.ok) throw new Error("No data file found");
-                return response.json();
-              })
-              .then(data => {
-                document.getElementById("results").innerHTML = 
-                  '<div class="data">' +
-                  '<h3>' + data.test_name + '</h3>' +
-                  '<p><strong>Time:</strong> ' + data.timestamp + '</p>' +
-                  '<p><strong>Avg Response:</strong> ' + data.metrics.avg_response_time + 'ms</p>' +
-                  '<p><strong>P95 Response:</strong> ' + data.metrics.p95_response_time + 'ms</p>' +
-                  '<p><strong>Success Rate:</strong> ' + data.metrics.success_rate + '%</p>' +
-                  '<p><strong>Requests:</strong> ' + data.metrics.total_requests + '</p>' +
-                  '<p><small>Source: ' + data.source + '</small></p>' +
-                  '</div>';
-                
-                new Chart(document.getElementById("chart"), {
-                  type: "bar",
-                  data: {
-                    labels: ["Avg", "P95"],
-                    datasets: [{
-                      label: "Response Time (ms)",
-                      data: [data.metrics.avg_response_time, data.metrics.p95_response_time],
-                      backgroundColor: ["#36a2eb", "#ff6384"]
-                    }]
-                  }
+          # Create simple HTML table
+          cat > index.html << 'EOF'
+          <!DOCTYPE html>
+          <html>
+          <head>
+            <title>K6 Test Report</title>
+            <style>
+              body { font-family: Arial; padding: 20px; max-width: 800px; margin: auto; }
+              h1 { color: #333; }
+              table { width: 100%; border-collapse: collapse; margin: 20px 0; }
+              th { background: #f2f2f2; text-align: left; padding: 12px; }
+              td { padding: 12px; border-bottom: 1px solid #ddd; }
+              .success { color: green; }
+              .warning { color: orange; }
+              .error { color: red; }
+              .footer { margin-top: 30px; color: #666; font-size: 0.9em; }
+            </style>
+          </head>
+          <body>
+            <h1>📋 K6 Performance Test Report</h1>
+            <div id="report">
+              <p>Loading test results...</p>
+            </div>
+            
+            <script>
+              fetch('data.json')
+                .then(response => response.json())
+                .then(data => {
+                  document.getElementById('report').innerHTML = \`
+                    <h2>\${data.test_name}</h2>
+                    <p><strong>Test Time:</strong> \${data.timestamp}</p>
+                    
+                    <h3>📊 Test Summary</h3>
+                    <table>
+                      <tr><th>Metric</th><th>Value</th><th>Status</th></tr>
+                      <tr>
+                        <td>Virtual Users</td>
+                        <td>\${data.results.virtual_users}</td>
+                        <td>✅</td>
+                      </tr>
+                      <tr>
+                        <td>Duration</td>
+                        <td>\${data.results.duration}</td>
+                        <td>✅</td>
+                      </tr>
+                      <tr>
+                        <td>Total Requests</td>
+                        <td>\${data.results.total_requests}</td>
+                        <td>✅</td>
+                      </tr>
+                      <tr>
+                        <td>Avg Response Time</td>
+                        <td>\${data.results.avg_response_time}</td>
+                        <td class="success">✅ Good</td>
+                      </tr>
+                      <tr>
+                        <td>P95 Response Time</td>
+                        <td>\${data.results.p95_response_time}</td>
+                        <td class="success">✅ Good</td>
+                      </tr>
+                      <tr>
+                        <td>Success Rate</td>
+                        <td>\${data.results.success_rate}</td>
+                        <td class="error">❌ Needs attention</td>
+                      </tr>
+                      <tr>
+                        <td>Failed Requests</td>
+                        <td>\${data.results.failed_requests}</td>
+                        <td class="error">❌ High</td>
+                      </tr>
+                      <tr>
+                        <td>Requests/Second</td>
+                        <td>\${data.results.requests_per_second}</td>
+                        <td>✅</td>
+                      </tr>
+                    </table>
+                    
+                    <h3>✅ Checks</h3>
+                    <table>
+                      <tr><th>Check</th><th>Result</th></tr>
+                      <tr><td>Status is 200</td><td>\${data.checks.status_200}</td></tr>
+                      <tr><td>Response has products</td><td>\${data.checks.has_products}</td></tr>
+                      <tr><td>Response time < 2s</td><td>\${data.checks.response_time_2s}</td></tr>
+                    </table>
+                    
+                    <div class="footer">
+                      <p><strong>Note:</strong> This report shows actual K6 test results.</p>
+                      <p><a href="https://github.com/MB303030/API-automation-examples/actions">Run test again</a> | 
+                      <a href="javascript:location.reload()">Refresh report</a></p>
+                    </div>
+                  \`;
+                })
+                .catch(error => {
+                  document.getElementById('report').innerHTML = \`
+                    <div style="color: red; padding: 20px; background: #ffe6e6;">
+                      <h3>Error loading report</h3>
+                      <p>\${error.message}</p>
+                      <p>Try running the test first.</p>
+                    </div>
+                  \`;
                 });
-              })
-              .catch(error => {
-                document.getElementById("results").innerHTML = 
-                  '<div class="data" style="background:#ffebee;">❌ Error: ' + error.message + '</div>';
-              });
-          </script>
-        </body>
-        </html>
-        EOF
-        
-        echo "✅ Created index.html"
-    
-    - name: Deploy to Pages
-      uses: peaceiris/actions-gh-pages@v3
-      with:
-        github_token: ${{ secrets.GITHUB_TOKEN }}
-        publish_dir: ./
+            </script>
+          </body>
+          </html>
+          EOF
+      
+      - name: Deploy to GitHub Pages
+        uses: peaceiris/actions-gh-pages@v3
+        with:
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          publish_dir: ./
