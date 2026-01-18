@@ -5,7 +5,7 @@ import findByStatusResponse from '../test-data/findByStatusResponse.json' assert
 import { findByStatusEndpoint, storeInventoryEndpoint } from '../utils/config/endpoints.js';
 
 // ✅ REQUEST HELPER from NEW request.js file
-import { apiGet } from '../utils/request.js';  // Changed from env.js to request.js
+import { apiGet } from '../utils/core/request.js';  // Changed from env.js to request.js
 
 test.describe('API verification example', () => {
 

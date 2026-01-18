@@ -12,7 +12,7 @@ import {
   apiPost,
   apiPut,
   apiDelete
-} from '../utils/request.js';
+} from '../utils/core/request.js';
 
 // ✅ PAYLOAD FACTORIES
 import { createPostmanInfo, createPostmanInfoPut } from '../post_requests/postmanInfo.js';
