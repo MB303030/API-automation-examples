@@ -13,12 +13,12 @@
     "load_test_normal": {
       "description": "Typical business day simulation",
       "stages": [
-        {"duration": "2m", "target": 10},   // Early morning (8-10am)
-        {"duration": "2m", "target": 30},   // Morning ramp-up (10am-12pm)
-        {"duration": "4m", "target": 80},   // Lunch hour peak (12-4pm)
-        {"duration": "3m", "target": 120},  // Afternoon peak (4-7pm)
-        {"duration": "2m", "target": 60},   // Evening decline (7-9pm)
-        {"duration": "2m", "target": 20}    // Late night (9-11pm)
+        {"duration": "2m", "target": 10},   
+        {"duration": "2m", "target": 30},   
+        {"duration": "4m", "target": 80},   
+        {"duration": "3m", "target": 120},  
+        {"duration": "2m", "target": 60},  
+        {"duration": "2m", "target": 20}   
       ]
     },
     

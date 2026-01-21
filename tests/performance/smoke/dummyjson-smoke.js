@@ -8,7 +8,9 @@ import {
 } from '../../../utils/config/endpoints.js';
 
 // Load traffic patterns from file
-const trafficData = JSON.parse(open('../../test-data/trafficPatterns.json'));
+//const trafficData = JSON.parse(open('../../test-data/trafficPatterns.json'));
+
+const trafficData = JSON.parse(open('./test-data/trafficPatterns.json'));
 
 
 /**
