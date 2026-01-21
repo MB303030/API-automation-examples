@@ -10,19 +10,9 @@ import {
 // Load traffic patterns from file
 //const trafficData = JSON.parse(open('../../test-data/trafficPatterns.json'));
 
-// Get the absolute path to your project
-const trafficData = JSON.parse(open('/full/path/to/API_PROJECT/test-data/trafficPatterns.json'));
+// For GitHub Actions, use the workspace path
+const trafficData = JSON.parse(open('/github/workspace/test-data/trafficPatterns.json'));
 
-try {
-  const fileContent = open('test-data/trafficPatterns.json');
-  console.log('✅ File loaded successfully');
-  const trafficData = JSON.parse(fileContent);
-  console.log('✅ JSON parsed successfully, keys:', Object.keys(trafficData));
-} catch (e) {
-  console.log('❌ Error:', e.message);
-  console.log('Current working directory (PWD):', __ENV.PWD);
-  console.log('Try running from API_PROJECT folder!');
-} 
 /**
  * SMOKE TEST - DummyJSON API
  * Purpose: Quick health check to verify API is working
