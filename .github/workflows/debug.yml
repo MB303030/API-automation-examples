@@ -17,6 +17,6 @@ jobs:
       - name: Install k6
         uses: grafana/setup-k6-action@v1
 
-      - name: Run k6 spike test
+      - name: Run spike test
         run: |
-          k6 run tests/spike/dummyjson-spike.js
+          k6 run tests/performance/spike/dummyjson-spike.js
