@@ -1,34 +1,99 @@
-name: Debug k6 Imports
+# .github/workflows/fix-k6-imports.yml
+name: debug k6 Imports
 
 on: [workflow_dispatch]
 
 jobs:
-  debug-imports:
+  fix-imports:
     runs-on: ubuntu-latest
     
     steps:
     - uses: actions/checkout@v4
     
+    - name: Create experimental directory
+      run: |
+        mkdir -p tests/experimental
+    
+    - name: Create debug scripts
+      run: |
+        # Create minimal env.js (without k6 imports)
+        cat > utils/config/env.js << 'EOF'
+        // Pure JavaScript - NO k6 imports!
+        export function getApiUrl(service, path) {
+          const baseUrls = {
+            dummyjson: 'https://dummyjson.com',
+            pet: 'https://petstore.swagger.io/v2',
+            postman: 'https://postman-echo.com'
+          };
+          
+          const baseUrl = baseUrls[service] || 'https://dummyjson.com';
+          return `${baseUrl}${path}`;
+        }
+        EOF
+        
+        # Create simple debug test
+        cat > tests/experimental/debug-simple.js << 'EOF'
+        import http from 'k6/http';
+        import { check } from 'k6';
+        
+        console.log('=== Simple Debug Test ===');
+        console.log('Testing imports...');
+        
+        try {
+          // Try to import endpoints
+          const endpoints = await import('../../../utils/config/endpoints.js');
+          console.log('✅ endpoints.js imported successfully!');
+          console.log('Available functions:', Object.keys(endpoints));
+          
+          // Test one function
+          const url = endpoints.getProductsEndpoint(5, 0);
+          console.log('Generated URL:', url);
+          
+          // Make a request
+          const res = http.get(url);
+          check(res, {
+            'Request successful': (r) => r.status === 200
+          });
+          
+        } catch (e) {
+          console.log('❌ Import failed:', e.message);
+          console.log('Full error:', e.stack);
+        }
+        
+        export default function() {
+          console.log('Test completed');
+        }
+        EOF
+        
+        # Create even simpler test
+        cat > tests/experimental/test-import-only.js << 'EOF'
+        console.log('=== Testing ONLY the import ===');
+        
+        // Just try to import, nothing else
+        try {
+          const module = await import('../../../utils/config/endpoints.js');
+          console.log('✅ SUCCESS! Import worked');
+          console.log('Exports:', Object.keys(module));
+        } catch (e) {
+          console.log('❌ FAILED:', e.message);
+          console.log('Error at line:', e.stack.split('\n')[1]);
+        }
+        
+        export default function() {}
+        EOF
+        
     - name: Setup k6
       uses: grafana/setup-k6-action@v1
     
-    - name: Show directory structure
+    - name: Run simple import test
       run: |
-        echo "=== Directory Structure ==="
-        echo "Current dir: $(pwd)"
-        echo ""
-        echo "Looking for endpoints.js:"
-        find . -name "endpoints.js" -type f
-        echo ""
-        echo "Looking for env.js:"
-        find . -name "env.js" -type f
-        echo ""
-        echo "From tests/experimental/ directory:"
-        cd tests/experimental/
-        echo "Looking up: ../../../utils/config/"
-        ls -la ../../../utils/config/ 2>/dev/null || echo "NOT FOUND"
+        echo "=== Running simple import test ==="
+        k6 run tests/experimental/test-import-only.js
     
-    - name: Run debug test
+    - name: Check current endpoints.js
       run: |
-        echo "=== Running k6 debug test ==="
-        k6 run tests/experimental/debug-imports.js --verbose
+        echo "=== Current endpoints.js content (first 10 lines) ==="
+        head -n 10 utils/config/endpoints.js
+        echo ""
+        echo "=== Does it import env.js correctly? ==="
+        grep -n "import.*env" utils/config/endpoints.js
