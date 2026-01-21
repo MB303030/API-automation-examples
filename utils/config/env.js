@@ -1,71 +1,74 @@
-import http from 'k6/http';
-import { check, sleep } from 'k6';
-import { getProductsEndpoint } from '../../utils/config/endpoints.js';
+// utils/config/env.js
+// CLEAN CONFIGURATION FILE - NO REDUNDANCIES
 
 /**
- * DummyJSON API Performance Test
- * Uses existing helper files
+ * Base URL configuration for all services
+ * Add all your project APIs here
  */
-export const options = {
-  vus: 2,            // 2 virtual users
-  duration: '30s',   // 30 seconds
+const baseUrls = {
+  // E-commerce & Products
+  dummyjson: 'https://dummyjson.com',
   
-  thresholds: {
-    http_req_failed: ['rate<0.01'],    // Less than 1% failures
-    http_req_duration: ['p(95)<2000'], // 95% under 2 seconds
-  },
+  // Pet Store (Swagger example)
+  petstore: 'https://petstore.swagger.io/v2',
+  pet: 'https://petstore.swagger.io/v2', // alias
+  
+  // Postman Echo (for testing)
+  postman: 'https://postman-echo.com',
+  echo: 'https://postman-echo.com', // alias
+  
+  // GitHub API
+  github: 'https://api.github.com',
+  
+  // JSONPlaceholder (testing API)
+  jsonplaceholder: 'https://jsonplaceholder.typicode.com',
+  
+  // ReqRes (testing API)
+  reqres: 'https://reqres.in/api',
+  
+  // Local development
+  local: 'http://localhost:3000',
+  
+  // Add more services as needed for your projects...
 };
 
-export default function () {
-  // Use your existing helper - this is the clean way!
-  const productsUrl = getProductsEndpoint(5, 10);
+/**
+ * Get full API URL for a service
+ * @param {string} service - Service name from baseUrls
+ * @param {string} path - API endpoint path
+ * @returns {string} Full URL
+ */
+export function getApiUrl(service, path) {
+  const baseUrl = baseUrls[service] || baseUrls.dummyjson;
   
-  // Test 1: Get products with pagination
-  const products = http.get(productsUrl);
+  // Ensure path starts with slash
+  const normalizedPath = path.startsWith('/') ? path : `/${path}`;
   
-  // Test 2: Get random single product (no helper needed for this pattern)
-  const productId = Math.floor(Math.random() * 100) + 1;
-  const singleProduct = http.get(`https://dummyjson.com/products/${productId}`);
-  
-  // Test 3: Search products (could add helper later if needed)
-  const search = http.get('https://dummyjson.com/products/search?q=phone');
-  
-  // Validate all responses
-  check(products, {
-    'products status 200': (r) => r.status === 200,
-    'has 5 products': (r) => {
-      try {
-        const body = JSON.parse(r.body);
-        return body.products && body.products.length === 5;
-      } catch {
-        return false;
-      }
-    },
-  });
-  
-  check(singleProduct, {
-    'single product status 200': (r) => r.status === 200,
-    'product has valid data': (r) => {
-      try {
-        const body = JSON.parse(r.body);
-        return body.id && body.title && body.price;
-      } catch {
-        return false;
-      }
-    },
-  });
-  
-  check(search, {
-    'search status 200': (r) => r.status === 200,
-    'search has results': (r) => {
-      try {
-        const body = JSON.parse(r.body);
-        return body.products && body.products.length > 0;
-      } catch {
-        return false;
-      }
-    },
-  });
-  
-  sleep(1); // Realistic pause between user actions
+  return `${baseUrl}${normalizedPath}`;
+}
+
+/**
+ * Get base URL only (without path)
+ * @param {string} service - Service name
+ * @returns {string} Base URL
+ */
+export function getBaseUrl(service) {
+  return baseUrls[service] || baseUrls.dummyjson;
+}
+
+/**
+ * Helper: Get service names available
+ * @returns {string[]} List of service names
+ */
+export function getAvailableServices() {
+  return Object.keys(baseUrls);
+}
+
+/**
+ * Helper: Check if service exists
+ * @param {string} service - Service name to check
+ * @returns {boolean} True if service exists
+ */
+export function hasService(service) {
+  return service in baseUrls;
 }
