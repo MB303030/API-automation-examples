@@ -1,21 +1,162 @@
-name: Quick Test
-on: workflow_dispatch
+# .github/workflows/test-debug-imports.yml
+name: Test Debug Imports Script
+
+on: [workflow_dispatch]
 
 jobs:
-  quick:
+  test-debug:
     runs-on: ubuntu-latest
+    
     steps:
-      - uses: actions/checkout@v4
-      
-      - run: |
-          echo "// Test" > test.js
-          echo "try { await import('utils/config/endpoints.js'); console.log('OK'); }" >> test.js
-          echo "catch(e) { console.log('ERROR:', e.message); }" >> test.js  
-          echo "export default function() {}" >> test.js
+    - uses: actions/checkout@v4
+    
+    - name: Check if debug-imports.js exists
+      run: |
+        echo "=== Looking for debug-imports.js ==="
+        find . -name "debug-imports.js" -type f
+        echo ""
+        
+        # Check if it exists in tests/experimental/
+        if [ -f "tests/experimental/debug-imports.js" ]; then
+          echo "✅ Found debug-imports.js at tests/experimental/debug-imports.js"
+          echo "Content (first 20 lines):"
+          head -20 tests/experimental/debug-imports.js
+        else
+          echo "❌ debug-imports.js not found at tests/experimental/debug-imports.js"
+          echo "Creating it..."
+          mkdir -p tests/experimental
+          cat > tests/experimental/debug-imports.js << 'EOF'
+          import http from 'k6/http';
+          import { check } from 'k6';
           
-          # Install k6
-          wget -q https://github.com/grafana/k6/releases/download/v1.5.0/k6-v1.5.0-linux-amd64.tar.gz
-          tar -xzf k6-v1.5.0-linux-amd64.tar.gz
+          // Try ALL possible import paths
+          console.log('=== DEBUGGING IMPORTS ===');
           
-          # Run test
-          ./k6-v1.5.0-linux-amd64/k6 run test.js
+          try {
+            console.log('1. Trying: ../../../utils/config/endpoints.js');
+            const module1 = await import('../../../utils/config/endpoints.js');
+            console.log('✅ SUCCESS! Module loaded');
+            console.log('   Exported functions:', Object.keys(module1));
+          } catch (e1) {
+            console.log('❌ FAILED:', e1.message);
+          }
+          
+          try {
+            console.log('\n2. Trying: /utils/config/endpoints.js (absolute)');
+            const module2 = await import('/utils/config/endpoints.js');
+            console.log('✅ SUCCESS!');
+          } catch (e2) {
+            console.log('❌ FAILED:', e2.message);
+          }
+          
+          try {
+            console.log('\n3. Trying: ../../config/endpoints.js');
+            const module3 = await import('../../config/endpoints.js');
+            console.log('✅ SUCCESS!');
+          } catch (e3) {
+            console.log('❌ FAILED:', e3.message);
+          }
+          
+          try {
+            console.log('\n4. Trying: ../../utils/config/endpoints.js');
+            const module4 = await import('../../utils/config/endpoints.js');
+            console.log('✅ SUCCESS!');
+          } catch (e4) {
+            console.log('❌ FAILED:', e4.message);
+          }
+          
+          // Try to open traffic patterns
+          console.log('\n=== DEBUGGING FILE ACCESS ===');
+          try {
+            console.log('5. Trying to open: test-data/trafficPatterns.json');
+            const content = open('test-data/trafficPatterns.json');
+            const data = JSON.parse(content);
+            console.log('✅ SUCCESS! File loaded and parsed');
+            console.log('   Keys:', Object.keys(data));
+          } catch (e) {
+            console.log('❌ FAILED:', e.message);
+          }
+          
+          export default function() {
+            console.log('Test completed');
+          }
+          EOF
+          echo "✅ Created debug-imports.js"
+        fi
+    
+    - name: Ensure config files are clean
+      run: |
+        echo "=== Ensuring clean config files ==="
+        
+        # Create clean env.js if it has k6 imports
+        if [ -f "utils/config/env.js" ]; then
+          if grep -q "from 'k6'" utils/config/env.js || grep -q 'from "k6"' utils/config/env.js; then
+            echo "❌ env.js has k6 imports - fixing..."
+            cat > utils/config/env-clean.js << 'EOF'
+            // Clean env.js
+            const baseUrls = {
+              dummyjson: 'https://dummyjson.com',
+              petstore: 'https://petstore.swagger.io/v2',
+              postman: 'https://postman-echo.com'
+            };
+            
+            export function getApiUrl(service, path) {
+              const baseUrl = baseUrls[service] || baseUrls.dummyjson;
+              const normalizedPath = path.startsWith('/') ? path : '/' + path;
+              return baseUrl + normalizedPath;
+            }
+            EOF
+            mv utils/config/env-clean.js utils/config/env.js
+            echo "✅ Created clean env.js"
+          else
+            echo "✅ env.js looks clean"
+          fi
+        else
+          echo "⚠️ env.js not found, creating it..."
+          cat > utils/config/env.js << 'EOF'
+          const baseUrls = {
+            dummyjson: 'https://dummyjson.com',
+            petstore: 'https://petstore.swagger.io/v2',
+            postman: 'https://postman-echo.com'
+          };
+          
+          export function getApiUrl(service, path) {
+            const baseUrl = baseUrls[service] || baseUrls.dummyjson;
+            const normalizedPath = path.startsWith('/') ? path : '/' + path;
+            return baseUrl + normalizedPath;
+          }
+          EOF
+        fi
+        
+        # Check endpoints.js
+        echo ""
+        echo "=== Checking endpoints.js ==="
+        if [ -f "utils/config/endpoints.js" ]; then
+          echo "endpoints.js exists"
+          echo "First line:"
+          head -1 utils/config/endpoints.js
+        else
+          echo "❌ endpoints.js not found!"
+        fi
+    
+    - name: Install k6
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y k6
+        
+    - name: Run debug-imports.js test
+      run: |
+        echo "=== Running debug-imports.js ==="
+        echo "Current directory: $(pwd)"
+        echo ""
+        
+        # Run from project root
+        k6 run tests/experimental/debug-imports.js
+        
+    - name: Also test from experimental directory
+      run: |
+        echo "=== Testing from experimental directory ==="
+        cd tests/experimental
+        echo "Now in: $(pwd)"
+        echo ""
+        k6 run debug-imports.js
