@@ -1,153 +1,196 @@
-# .github/workflows/check-file-content.yml
-name: Check File Content
+# .github/workflows/show-actual-files.yml
+name: Show Actual Files
 
 on: [workflow_dispatch]
 
 jobs:
-  check-content:
+  show-files:
     runs-on: ubuntu-latest
     
     steps:
     - uses: actions/checkout@v4
     
-    - name: Check endpoints.js file
+    - name: Show files with proper ES module check
       run: |
-        echo "=== ENDPOINTS.JS FULL CONTENT ==="
-        echo ""
+        echo "=== ENDPOINTS.JS ==="
+        echo "Full content:"
+        echo "----------------------------------------"
         cat utils/config/endpoints.js
+        echo "----------------------------------------"
         echo ""
-        echo "=== FILE INFO ==="
-        echo "Size: $(wc -c < utils/config/endpoints.js) bytes"
-        echo "Lines: $(wc -l < utils/config/endpoints.js)"
-        echo ""
-        echo "=== CHECKING FOR IMPORTS ==="
-        grep -n "import" utils/config/endpoints.js || echo "No imports found"
-        echo ""
-        echo "=== CHECKING FOR EXPORTS ==="
-        grep -n "export" utils/config/endpoints.js || echo "No exports found"
-        echo ""
-        echo "=== CHECKING FOR K6 IMPORTS ==="
-        if grep -q "from 'k6'" utils/config/endpoints.js || grep -q 'from "k6"' utils/config/endpoints.js; then
-          echo "❌ endpoints.js imports k6! This is wrong."
-          grep -n "k6" utils/config/endpoints.js
-        else
-          echo "✅ endpoints.js doesn't import k6"
-        fi
-    
-    - name: Check env.js file
-      run: |
-        echo "=== ENV.JS FULL CONTENT ==="
-        echo ""
+        
+        echo "=== ENV.JS ==="
+        echo "Full content:"
+        echo "----------------------------------------"
         cat utils/config/env.js
+        echo "----------------------------------------"
         echo ""
-        echo "=== FILE INFO ==="
-        echo "Size: $(wc -c < utils/config/env.js) bytes"
-        echo "Lines: $(wc -l < utils/config/env.js)"
+        
+        echo "=== CHECKING IMPORTS ==="
+        echo "endpoints.js imports:"
+        grep -n "import" utils/config/endpoints.js || echo "No imports"
         echo ""
-        echo "=== CHECKING FOR K6 IMPORTS ==="
-        if grep -q "from 'k6'" utils/config/env.js || grep -q 'from "k6"' utils/config/env.js; then
-          echo "❌ env.js imports k6! This is wrong."
-          grep -n "k6" utils/config/env.js
-        else
-          echo "✅ env.js doesn't import k6"
-        fi
-    
-    - name: Test JavaScript syntax
+        echo "env.js imports:"
+        grep -n "import" utils/config/env.js || echo "No imports"
+        
+    - name: Create a direct test
       run: |
-        echo "=== TESTING JAVASCRIPT SYNTAX ==="
+        echo "=== CREATING DIRECT TEST ==="
         
-        # Create a test file
-        cat > test-syntax.js << 'EOF'
-        const fs = require('fs');
+        # Test reading the files first
+        cat > read-test.js << 'EOF'
+        import { readFileSync } from 'fs';
         
-        console.log('Testing endpoints.js syntax...');
+        console.log('Reading endpoints.js...');
         try {
-          const content = fs.readFileSync('utils/config/endpoints.js', 'utf8');
-          // Check if it's a valid ES module
+          const content = readFileSync('utils/config/endpoints.js', 'utf8');
+          console.log('✅ File read successfully');
+          console.log('First 300 characters:');
+          console.log(content.substring(0, 300));
+          
+          // Check key elements
           if (!content.includes('export')) {
-            console.log('❌ endpoints.js has no export statements');
+            console.log('❌ WARNING: No export statements found');
           }
-          if (!content.includes('function') && !content.includes('const') && !content.includes('let')) {
-            console.log('❌ endpoints.js has no function/const/let declarations');
+          if (content.includes("from 'k6'") || content.includes('from "k6"')) {
+            console.log('❌ ERROR: File imports k6 (should not)');
           }
-          console.log('First 200 chars:', content.substring(0, 200));
         } catch (e) {
-          console.log('Error reading file:', e.message);
+          console.log('❌ Cannot read file:', e.message);
         }
         
-        console.log('\nTesting env.js syntax...');
+        console.log('\nReading env.js...');
         try {
-          const content = fs.readFileSync('utils/config/env.js', 'utf8');
-          console.log('First 200 chars:', content.substring(0, 200));
+          const content = readFileSync('utils/config/env.js', 'utf8');
+          console.log('✅ File read successfully');
+          console.log('First 200 characters:');
+          console.log(content.substring(0, 200));
         } catch (e) {
-          console.log('Error reading file:', e.message);
+          console.log('❌ Cannot read file:', e.message);
         }
         EOF
         
-        node test-syntax.js
+        node read-test.js
     
-    - name: Create a working test
-      run: |
-        echo "=== CREATING WORKING TEST ==="
-        
-        # First, backup original files
-        cp utils/config/endpoints.js utils/config/endpoints.js.backup
-        cp utils/config/env.js utils/config/env.js.backup
-        
-        # Create WORKING endpoints.js
-        cat > utils/config/endpoints.js << 'EOF'
-        // SIMPLE WORKING endpoints.js
-        export function getProductsEndpoint(limit = 30, skip = 0) {
-          return `https://dummyjson.com/products?limit=${limit}&skip=${skip}`;
-        }
-        
-        export function getProductByIdEndpoint(id) {
-          return `https://dummyjson.com/products/${id}`;
-        }
-        
-        export function searchProductsEndpoint(term) {
-          return `https://dummyjson.com/products/search?q=${encodeURIComponent(term)}`;
-        }
-        EOF
-        
-        # Create WORKING env.js (empty since we're not using it)
-        cat > utils/config/env.js << 'EOF'
-        // Empty env.js - endpoints.js doesn't use it now
-        EOF
-        
-        echo "Created simple working files"
-        
-    - name: Test the working files
+    - name: Test k6 import directly
       uses: grafana/setup-k6-action@v1
       
-    - name: Run test with working files
+    - name: Run minimal k6 test
       run: |
-        echo "=== TESTING WITH WORKING FILES ==="
+        echo "=== MINIMAL K6 TEST ==="
         
-        cat > test-working.js << 'EOF'
-        console.log('Testing with simple endpoints.js...');
+        cat > minimal-k6-test.js << 'EOF'
+        console.log('=== MINIMAL TEST ===');
+        
+        // Just try to read and show the file content
+        try {
+          const content = open('utils/config/endpoints.js');
+          console.log('✅ Can open file');
+          console.log('File size:', content.length, 'chars');
+          console.log('First 5 lines:');
+          const lines = content.split('\n').slice(0, 5);
+          lines.forEach((line, i) => console.log(`  ${i+1}: ${line}`));
+        } catch (e) {
+          console.log('❌ Cannot open file:', e.message);
+        }
+        
+        console.log('\n=== TRYING TO IMPORT ===');
+        try {
+          const module = await import('utils/config/endpoints.js');
+          console.log('✅ Import successful!');
+          console.log('Exports:', Object.keys(module));
+        } catch (e) {
+          console.log('❌ Import failed');
+          console.log('Error name:', e.name);
+          console.log('Error message:', e.message);
+          console.log('Error stack:', e.stack);
+        }
+        
+        export default function() {
+          console.log('Test iteration');
+        }
+        EOF
+        
+        k6 run minimal-k6-test.js
+    
+    - name: Fix the files if needed
+      run: |
+        echo "=== CREATING CORRECT FILES ==="
+        
+        # Read current endpoints.js to see what's wrong
+        CURRENT_ENDPOINTS=$(cat utils/config/endpoints.js)
+        
+        if [ -z "$CURRENT_ENDPOINTS" ] || [ ${#CURRENT_ENDPOINTS} -lt 10 ]; then
+          echo "Current endpoints.js seems empty or too small"
+          echo "Creating correct version..."
+          
+          cat > utils/config/endpoints.js << 'EOF'
+          import { getApiUrl } from './env.js';
+
+          export function getProductsEndpoint(limit = 30, skip = 0) {
+            return getApiUrl('dummyjson', `/products?limit=${limit}&skip=${skip}`);
+          }
+
+          export function getProductByIdEndpoint(id) {
+            return getApiUrl('dummyjson', `/products/${id}`);
+          }
+
+          export function searchProductsEndpoint(term) {
+            return getApiUrl('dummyjson', `/products/search?q=${encodeURIComponent(term)}`);
+          }
+
+          export function getAllCategoriesEndpoint() {
+            return getApiUrl('dummyjson', '/products/categories');
+          }
+          EOF
+          
+          echo "Created new endpoints.js"
+        fi
+        
+        # Check env.js
+        CURRENT_ENV=$(cat utils/config/env.js)
+        
+        if echo "$CURRENT_ENV" | grep -q "from 'k6'" || echo "$CURRENT_ENV" | grep -q 'from "k6"'; then
+          echo "env.js imports k6 - fixing..."
+          
+          cat > utils/config/env.js << 'EOF'
+          export function getApiUrl(service, path) {
+            const baseUrls = {
+              dummyjson: 'https://dummyjson.com',
+              pet: 'https://petstore.swagger.io/v2',
+              postman: 'https://postman-echo.com'
+            };
+            
+            const baseUrl = baseUrls[service] || 'https://dummyjson.com';
+            return `${baseUrl}${path}`;
+          }
+          EOF
+          
+          echo "Created new env.js without k6 imports"
+        fi
+        
+    - name: Test with fixed files
+      run: |
+        echo "=== TESTING WITH POTENTIALLY FIXED FILES ==="
+        
+        cat > test-fixed.js << 'EOF'
+        console.log('Testing imports after fix...');
         
         try {
           const endpoints = await import('utils/config/endpoints.js');
-          console.log('✅ Import successful!');
-          console.log('Functions:', Object.keys(endpoints));
+          console.log('✅ SUCCESS! Import works');
+          console.log('Exports:', Object.keys(endpoints));
           
+          // Test a function
           const url = endpoints.getProductsEndpoint(5, 0);
           console.log('Generated URL:', url);
           
         } catch (e) {
-          console.log('❌ Import failed:', e.message);
+          console.log('❌ Still failing:', e.message);
           console.log('Stack:', e.stack);
         }
         
         export default function() {}
         EOF
         
-        k6 run test-working.js
-    
-    - name: Restore original files
-      if: always()
-      run: |
-        echo "=== RESTORING ORIGINAL FILES ==="
-        mv utils/config/endpoints.js.backup utils/config/endpoints.js 2>/dev/null || true
-        mv utils/config/env.js.backup utils/config/env.js 2>/dev/null || true
+        k6 run test-fixed.js
