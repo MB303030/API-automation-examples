@@ -1,12 +1,13 @@
 import http from 'k6/http';
 import { check, sleep } from 'k6';
+import { 
+  getProductsEndpoint,
+  getProductByIdEndpoint,
+  searchProductsEndpoint,
+  getProductsByCategoryEndpoint
+} from '../../../utils/config/endpoints.js';
 
-/**
- * SPIKE TEST - DummyJSON API
- * Tests: How API handles sudden traffic bursts
- */
-
-// Load ALL data from file
+// Load traffic patterns from file
 const trafficData = JSON.parse(open('../../test-data/trafficPatterns.json'));
 
 export const options = {
@@ -18,44 +19,64 @@ export const options = {
 };
 
 export default function () {
-  // SPIKE PATTERN: During flash sales, users mostly check POPULAR items
+  // SPIKE BEHAVIOR: Flash sale or viral content scenario
   
-  // 80% chance: Get FIRST PAGE of products (not random page!)
-  if (Math.random() < 0.8) {
-    // During spikes, users go to first page (skip=0), not random pages
-    const limit = Math.floor(Math.random() * 5) + 1; // 1-5 products
-    const products = http.get(`https://dummyjson.com/products?limit=${limit}&skip=0`); // ALWAYS page 1
+  // During spikes, many users REFRESH the same page
+  const refreshCount = Math.random() < 0.6 ? Math.floor(Math.random() * 3) + 1 : 1;
+  
+  for (let i = 0; i < refreshCount; i++) {
+    // SCENARIO 1: Browse first page (90% during spike)
+    if (Math.random() < 0.9) {
+      // Small page size for faster loading during spike
+      const limit = Math.floor(Math.random() * 5) + 1; // 1-5 products
+      const products = http.get(getProductsEndpoint(limit, 0));
+      
+      check(products, {
+        'page loaded during spike': (r) => r.status === 200,
+        'fast spike response': (r) => r.timings.duration < 1500,
+      });
+    }
     
-    check(products, {
-      'products status 200': (r) => r.status === 200,
-    });
+    // SCENARIO 2: View popular product (70% during spike)
+    if (Math.random() < 0.7) {
+      // Only top 5 popular products during spike
+      const popularIds = [1, 2, 3, 4, 5];
+      const productId = popularIds[Math.floor(Math.random() * popularIds.length)];
+      const product = http.get(getProductByIdEndpoint(productId));
+      
+      check(product, {
+        'popular product loaded': (r) => r.status === 200,
+      });
+    }
+    
+    // SCENARIO 3: Search for trending items (50% during spike)
+    if (Math.random() < 0.5) {
+      const trendingTerms = ['phone', 'sale', 'discount', 'laptop'];
+      const term = trendingTerms[Math.floor(Math.random() * trendingTerms.length)];
+      const search = http.get(searchProductsEndpoint(term));
+      
+      check(search, {
+        'search successful during spike': (r) => r.status === 200,
+      });
+    }
+    
+    // SCENARIO 4: Browse by category (30% during spike)
+    if (Math.random() < 0.3) {
+      const popularCategories = ['smartphones', 'laptops', 'fragrances'];
+      const category = popularCategories[Math.floor(Math.random() * popularCategories.length)];
+      const categoryProducts = http.get(getProductsByCategoryEndpoint(category));
+      
+      check(categoryProducts, {
+        'category browse worked': (r) => r.status === 200,
+      });
+    }
+    
+    // VERY short pause between rapid actions during spike
+    if (i < refreshCount - 1) {
+      sleep(Math.random() * 0.2); // 0-0.2 seconds
+    }
   }
   
-  // 40% chance: View SPECIFIC popular product (not random!)
-  if (Math.random() < 0.4) {
-    // During spikes, users check TOP 10 products, not random 1-100
-    const popularProducts = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10]; // Top 10 products
-    const productId = popularProducts[Math.floor(Math.random() * popularProducts.length)];
-    
-    const singleProduct = http.get(`https://dummyjson.com/products/${productId}`);
-    
-    check(singleProduct, {
-      'product status 200': (r) => r.status === 200,
-    });
-  }
-  
-  // 30% chance: Search for POPULAR terms (not random!)
-  if (Math.random() < 0.3) {
-    const popularSearchTerms = ['phone', 'laptop', 'sale']; // Only popular terms during spike
-    const randomTerm = popularSearchTerms[Math.floor(Math.random() * popularSearchTerms.length)];
-    
-    const search = http.get(`https://dummyjson.com/products/search?q=${randomTerm}`);
-    
-    check(search, {
-      'search status 200': (r) => r.status === 200,
-    });
-  }
-  
-  // SPIKE think time: Very short (users spam!)
-  sleep(Math.random() * 0.9 + 0.1); // 0.1-1 second
+  // Final short think time after spike activity
+  sleep(Math.random() * 0.5 + 0.1); // 0.1-0.6 seconds
 }
