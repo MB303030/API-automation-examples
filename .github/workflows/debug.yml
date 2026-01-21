@@ -1,74 +1,24 @@
-# .github/workflows/check-env-file.yml
-name: Check env.js File
+# .github/workflows/single-file-test.yml
+name: Single File Test
 
 on: [workflow_dispatch]
 
 jobs:
-  check-env:
+  single-file:
     runs-on: ubuntu-latest
     
     steps:
     - uses: actions/checkout@v4
     
-    - name: Show env.js content
+    - name: Create combined test file
       run: |
-        echo "=== ENV.JS FULL CONTENT ==="
-        cat utils/config/env.js
-        echo ""
-        echo "=== FILE SIZE ==="
-        wc -c utils/config/env.js
-        echo ""
-        echo "=== CHECKING FOR K6 IMPORTS ==="
-        if grep -q "from 'k6'" utils/config/env.js || grep -q 'from "k6"' utils/config/env.js; then
-          echo "❌ env.js imports k6!"
-          echo "This file should NOT import k6 modules"
-        else
-          echo "✅ No k6 imports found"
-        fi
+        # Combine endpoints.js and env.js into one file
+        cat > combined-test.js << 'EOF'
+        import http from 'k6/http';
+        import { check } from 'k6';
         
-        echo ""
-        echo "=== CHECKING FOR EXPORTS ==="
-        if grep -q "export" utils/config/env.js; then
-          echo "✅ Has export statements"
-        else
-          echo "❌ No export statements found"
-        fi
-    
-    - name: Test env.js directly
-      run: |
-        echo "=== TESTING ENV.JS WITH K6 ==="
-        
-        cat > test-env.js << 'EOF'
-        console.log('Testing env.js import...');
-        
-        try {
-          const env = await import('utils/config/env.js');
-          console.log('✅ env.js import successful!');
-          console.log('Exports:', Object.keys(env));
-        } catch (e) {
-          console.log('❌ env.js import failed');
-          console.log('Error:', e.message);
-          console.log('Stack:', e.stack);
-        }
-        
-        export default function() {}
-        EOF
-        
-        # Setup k6
-        curl -L https://github.com/grafana/k6/releases/download/v1.5.0/k6-v1.5.0-linux-amd64.tar.gz | tar xz
-        ./k6-v1.5.0-linux-amd64/k6 run test-env.js
-    
-    - name: Fix env.js if needed
-      run: |
-        echo "=== FIXING ENV.JS ==="
-        
-        # Backup original
-        cp utils/config/env.js utils/config/env.js.backup
-        
-        # Create CORRECT env.js
-        cat > utils/config/env.js << 'EOF'
-        // CORRECT env.js - NO k6 imports!
-        export function getApiUrl(service, path) {
+        // Copy the content of env.js here
+        function getApiUrl(service, path) {
           const baseUrls = {
             dummyjson: 'https://dummyjson.com',
             pet: 'https://petstore.swagger.io/v2',
@@ -78,37 +28,43 @@ jobs:
           const baseUrl = baseUrls[service] || 'https://dummyjson.com';
           return `${baseUrl}${path}`;
         }
-        EOF
         
-        echo "Created corrected env.js"
-        
-    - name: Test the fix
-      run: |
-        echo "=== TESTING FIXED ENV.JS ==="
-        
-        cat > test-fix.js << 'EOF'
-        console.log('Testing fixed env.js...');
-        
-        try {
-          const env = await import('utils/config/env.js');
-          console.log('✅ env.js import works!');
-          console.log('Exports:', Object.keys(env));
-          
-          // Now test endpoints.js
-          console.log('\nTesting endpoints.js...');
-          const endpoints = await import('utils/config/endpoints.js');
-          console.log('✅ endpoints.js import works!');
-          console.log('Exports:', Object.keys(endpoints));
-          
-          // Test a function
-          const url = endpoints.getProductsEndpoint(5, 0);
-          console.log('Generated URL:', url);
-          
-        } catch (e) {
-          console.log('❌ Still failing:', e.message);
+        // Copy the functions from endpoints.js here
+        function getProductsEndpoint(limit = 30, skip = 0) {
+          return getApiUrl('dummyjson', `/products?limit=${limit}&skip=${skip}`);
         }
         
-        export default function() {}
+        function getProductByIdEndpoint(id) {
+          return getApiUrl('dummyjson', `/products/${id}`);
+        }
+        
+        function searchProductsEndpoint(term) {
+          return getApiUrl('dummyjson', `/products/search?q=${encodeURIComponent(term)}`);
+        }
+        
+        console.log('=== COMBINED TEST ===');
+        
+        // Test the functions
+        const url = getProductsEndpoint(5, 0);
+        console.log('Generated URL:', url);
+        
+        const res = http.get(url);
+        check(res, {
+          'status 200': (r) => r.status === 200
+        });
+        
+        console.log('Response status:', res.status);
+        
+        export default function() {
+          console.log('Iteration');
+        }
         EOF
         
-        ./k6-v1.5.0-linux-amd64/k6 run test-fix.js
+        echo "Created combined test file"
+    
+    - name: Run combined test
+      uses: grafana/setup-k6-action@v1
+      
+    - name: Execute test
+      run: |
+        k6 run combined-test.js
