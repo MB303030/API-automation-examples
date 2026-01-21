@@ -1,11 +1,16 @@
+import http from 'k6/http';
+import { check, sleep } from 'k6';
+
 import {
   getProductsEndpoint,
   getProductByIdEndpoint,
   searchProductsEndpoint,
   getProductsByCategoryEndpoint
-} from 'utils/config/endpoints.js';
+} from '../../../utils/config/endpoints.js';
 
-const trafficData = JSON.parse(open('test-data/trafficPatterns.json'));
+const trafficData = JSON.parse(
+  open('../../../test-data/trafficPatterns.json')
+);
 
 
 export const options = {
