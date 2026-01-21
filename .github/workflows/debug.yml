@@ -1,130 +1,21 @@
-# .github/workflows/clean-debug.yml
-name: Clean Debug Test
-
-on: [workflow_dispatch]
+name: Quick Test
+on: workflow_dispatch
 
 jobs:
-  clean-debug:
+  quick:
     runs-on: ubuntu-latest
-    
     steps:
-    - uses: actions/checkout@v4
-    
-    - name: Create extremely simple debug script
-      run: |
-        # Create a debug script with NO complex escaping
-        cat > simple-test.js << 'EOF'
-// SIMPLE DEBUG SCRIPT
-console.log('STARTING DEBUG');
-
-// Try the most basic import
-console.log('\\n1. Testing import from project root...');
-try {
-  const endpoints = await import('utils/config/endpoints.js');
-  console.log('SUCCESS! Import worked.');
-  console.log('Found functions: ' + Object.keys(endpoints).join(', '));
-  
-  // Try to use a function
-  if (endpoints.getProductsEndpoint) {
-    const url = endpoints.getProductsEndpoint(5, 0);
-    console.log('Generated URL: ' + url);
-  }
-} catch (e) {
-  console.log('FAILED: ' + e.message);
-}
-
-// Try to read the file directly
-console.log('\\n2. Reading endpoints.js file...');
-try {
-  const content = open('utils/config/endpoints.js');
-  console.log('File exists, size: ' + content.length + ' chars');
-  console.log('First line: ' + content.split('\\n')[0]);
-} catch (e) {
-  console.log('Cannot read file: ' + e.message);
-}
-
-// Try to read env.js
-console.log('\\n3. Reading env.js file...');
-try {
-  const envContent = open('utils/config/env.js');
-  console.log('env.js exists, size: ' + envContent.length + ' chars');
-  console.log('First line: ' + envContent.split('\\n')[0]);
-} catch (e) {
-  console.log('Cannot read env.js: ' + e.message);
-}
-
-console.log('\\nDEBUG COMPLETE');
-export default function() {
-  console.log('Test iteration');
-}
-EOF
-
-        echo "Created simple-test.js"
-        
-    - name: Fix env.js if it has problems
-      run: |
-        echo "=== Fixing env.js if needed ==="
-        
-        # Check if env.js exists and has issues
-        if [ -f utils/config/env.js ]; then
-          echo "env.js exists, checking for k6 imports..."
+      - uses: actions/checkout@v4
+      
+      - run: |
+          echo "// Test" > test.js
+          echo "try { await import('utils/config/endpoints.js'); console.log('OK'); }" >> test.js
+          echo "catch(e) { console.log('ERROR:', e.message); }" >> test.js  
+          echo "export default function() {}" >> test.js
           
-          # Use grep with proper escaping
-          if grep -q "from 'k6'" utils/config/env.js || grep -q "from \"k6\"" utils/config/env.js; then
-            echo "FOUND k6 imports in env.js - replacing with clean version"
-            
-            # Create clean env.js using cat with simple content
-            cat > utils/config/env-clean.js << 'EOF'
-// Clean env.js configuration
-const baseUrls = {
-  dummyjson: 'https://dummyjson.com',
-  petstore: 'https://petstore.swagger.io/v2',
-  postman: 'https://postman-echo.com'
-};
-
-export function getApiUrl(service, path) {
-  const baseUrl = baseUrls[service] || baseUrls.dummyjson;
-  const normalizedPath = path.startsWith('/') ? path : '/' + path;
-  return baseUrl + normalizedPath;
-}
-EOF
-            
-            mv utils/config/env-clean.js utils/config/env.js
-            echo "Replaced env.js with clean version"
-          else
-            echo "env.js looks OK (no k6 imports)"
-          fi
-        else
-          echo "env.js does not exist, creating it..."
-          cat > utils/config/env.js << 'EOF'
-// Clean env.js configuration
-const baseUrls = {
-  dummyjson: 'https://dummyjson.com',
-  petstore: 'https://petstore.swagger.io/v2',
-  postman: 'https://postman-echo.com'
-};
-
-export function getApiUrl(service, path) {
-  const baseUrl = baseUrls[service] || baseUrls.dummyjson;
-  const normalizedPath = path.startsWith('/') ? path : '/' + path;
-  return baseUrl + normalizedPath;
-}
-EOF
-        fi
-        
-        # Also check endpoints.js
-        echo ""
-        echo "=== Checking endpoints.js ==="
-        if [ -f utils/config/endpoints.js ]; then
-          echo "endpoints.js exists"
-          echo "First 2 lines:"
-          head -2 utils/config/endpoints.js
-        fi
-    
-    - name: Setup k6
-      uses: grafana/setup-k6-action@v1
-    
-    - name: Run the test
-      run: |
-        echo "=== Running simple debug test ==="
-        k6 run simple-test.js
+          # Install k6
+          wget -q https://github.com/grafana/k6/releases/download/v1.5.0/k6-v1.5.0-linux-amd64.tar.gz
+          tar -xzf k6-v1.5.0-linux-amd64.tar.gz
+          
+          # Run test
+          ./k6-v1.5.0-linux-amd64/k6 run test.js
