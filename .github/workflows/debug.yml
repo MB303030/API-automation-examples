@@ -1,212 +1,196 @@
-# .github/workflows/update-endpoints.yml
-name: Update Endpoints.js
+# .github/workflows/final-fix-all.yml
+name: Final Fix - All Files
 
 on: [workflow_dispatch]
 
 jobs:
-  update-endpoints:
+  final-fix:
     runs-on: ubuntu-latest
     
     steps:
     - uses: actions/checkout@v4
     
-    - name: Update endpoints.js
+    - name: Create clean env.js
+      run: |
+        echo "=== Creating clean env.js ==="
+        
+        # Backup if exists
+        if [ -f utils/config/env.js ]; then
+          cp utils/config/env.js utils/config/env.js.backup-final
+          echo "Backed up existing env.js"
+        fi
+        
+        # Create clean env.js with proper escaping
+        cat > utils/config/env.js << "EOF"
+// utils/config/env.js - Clean configuration
+const baseUrls = {
+  dummyjson: 'https://dummyjson.com',
+  petstore: 'https://petstore.swagger.io/v2',
+  pet: 'https://petstore.swagger.io/v2',
+  postman: 'https://postman-echo.com',
+  echo: 'https://postman-echo.com',
+  github: 'https://api.github.com',
+  jsonplaceholder: 'https://jsonplaceholder.typicode.com',
+  reqres: 'https://reqres.in/api',
+  local: 'http://localhost:3000'
+};
+
+export function getApiUrl(service, path) {
+  const baseUrl = baseUrls[service] || baseUrls.dummyjson;
+  const normalizedPath = path.startsWith('/') ? path : "/" + path;
+  return baseUrl + normalizedPath;
+}
+
+export function getBaseUrl(service) {
+  return baseUrls[service] || baseUrls.dummyjson;
+}
+EOF
+        
+        echo "✅ Created clean env.js"
+        
+    - name: Update endpoints.js with correct service names
       run: |
         echo "=== Updating endpoints.js ==="
         
-        # Backup current
-        cp utils/config/endpoints.js utils/config/endpoints.js.backup
+        # Backup
+        cp utils/config/endpoints.js utils/config/endpoints.js.backup-final
         
-        # Create updated version
-        cat > utils/config/endpoints.js << 'EOF'
-        import { getApiUrl } from './env.js';
-
-        /* ─────────────────────────────
-           PET SERVICE ENDPOINTS
-        ───────────────────────────── */
-        export function findByStatusEndpoint(status = 'available') {
-          const safeStatus = encodeURIComponent(status);
-          return getApiUrl('petstore', `/pet/findByStatus?status=${safeStatus}`);
-        }
-
-        export function storeInventoryEndpoint() {
-          return getApiUrl('petstore', '/store/inventory');
-        }
-
-        /* ─────────────────────────────
-           POSTMAN ECHO ENDPOINTS
-        ───────────────────────────── */
-        export function postmanInfoEndpoint() {
-          return getApiUrl('postman', '/info');
-        }
-
-        export function postmanInfoPutEndpoint(id = 1) {
-          return getApiUrl('postman', `/info?id=${encodeURIComponent(id)}`);
-        }
-
-        export function postmanInfoDeleteEndpoint(id = 12345) {
-          return getApiUrl('postman', `/info?id=${encodeURIComponent(id)}`);
-        }
-
-        /* ─────────────────────────────
-           DUMMYJSON ENDPOINTS - COMPLETE SET
-        ───────────────────────────── */
-        export function getProductsEndpoint(limit = 30, skip = 0) {
-          return getApiUrl('dummyjson', `/products?limit=${limit}&skip=${skip}`);
-        }
-
-        export function getProductByIdEndpoint(id) {
-          return getApiUrl('dummyjson', `/products/${id}`);
-        }
-
-        export function searchProductsEndpoint(term) {
-          return getApiUrl('dummyjson', `/products/search?q=${encodeURIComponent(term)}`);
-        }
-
-        export function getProductsByCategoryEndpoint(category) {
-          return getApiUrl('dummyjson', `/products/category/${encodeURIComponent(category)}`);
-        }
-
-        export function getAllCategoriesEndpoint() {
-          return getApiUrl('dummyjson', '/products/categories');
-        }
-
-        export function addNewProductEndpoint() {
-          return getApiUrl('dummyjson', '/products/add');
-        }
-
-        export function updateProductEndpoint(id) {
-          return getApiUrl('dummyjson', `/products/${id}`);
-        }
-
-        /* ─────────────────────────────
-           HELPER FUNCTIONS
-        ───────────────────────────── */
-
-        /**
-         * Helper to build query string parameters
-         */
-        export function buildQueryString(params) {
-          const queryParams = new URLSearchParams();
-          
-          Object.entries(params).forEach(([key, value]) => {
-            if (value !== undefined && value !== null) {
-              queryParams.append(key, value);
-            }
-          });
-          
-          return queryParams.toString();
-        }
-
-        /**
-         * Create endpoint with query parameters
-         */
-        export function endpointWithParams(baseEndpoint, queryParams) {
-          const queryString = buildQueryString(queryParams);
-          return queryString ? `${baseEndpoint}?${queryString}` : baseEndpoint;
-        }
-
-        /**
-         * Get products endpoint with custom query parameters
-         */
-        export function getProductsWithParams(options = {}) {
-          const baseUrl = getApiUrl('dummyjson', '/products');
-          return endpointWithParams(baseUrl, options);
-        }
-
-        /**
-         * Get paginated endpoint
-         */
-        export function getPaginatedEndpoint(endpoint, page = 1, perPage = 10) {
-          const skip = (page - 1) * perPage;
-          const limit = perPage;
-          
-          const separator = endpoint.includes('?') ? '&' : '?';
-          return `${endpoint}${separator}skip=${skip}&limit=${limit}`;
-        }
-        EOF
+        # Read current file and replace 'pet' with 'petstore' for consistency
+        sed -i "s/getApiUrl('pet'/getApiUrl('petstore'/g" utils/config/endpoints.js
+        sed -i "s/getApiUrl(\"pet\"/getApiUrl(\"petstore\"/g" utils/config/endpoints.js
         
-        echo "✅ Updated endpoints.js"
+        echo "✅ Updated service names in endpoints.js"
         
-    - name: Ensure clean env.js exists
+    - name: Verify files
       run: |
-        if [ ! -f utils/config/env.js ] || grep -q "export default function" utils/config/env.js; then
-          echo "Creating clean env.js..."
-          cat > utils/config/env.js << 'EOF'
-          const baseUrls = {
-            dummyjson: 'https://dummyjson.com',
-            petstore: 'https://petstore.swagger.io/v2',
-            pet: 'https://petstore.swagger.io/v2',
-            postman: 'https://postman-echo.com',
-            echo: 'https://postman-echo.com',
-            github: 'https://api.github.com',
-            jsonplaceholder: 'https://jsonplaceholder.typicode.com',
-            reqres: 'https://reqres.in/api',
-            local: 'http://localhost:3000'
-          };
-
-          export function getApiUrl(service, path) {
-            const baseUrl = baseUrls[service] || baseUrls.dummyjson;
-            const normalizedPath = path.startsWith('/') ? path : \`/\${path}\`;
-            return \`\${baseUrl}\${normalizedPath}\`;
-          }
-
-          export function getBaseUrl(service) {
-            return baseUrls[service] || baseUrls.dummyjson;
-          }
-          EOF
-        fi
-    
-    - name: Test the updated setup
+        echo "=== Verifying files ==="
+        echo "env.js:"
+        head -20 utils/config/env.js
+        echo ""
+        echo "endpoints.js (first 20 lines):"
+        head -20 utils/config/endpoints.js
+        
+    - name: Setup k6
       uses: grafana/setup-k6-action@v1
       
-    - name: Run comprehensive test
+    - name: Run simple import test
       run: |
-        echo "=== Testing updated endpoints.js ==="
+        echo "=== Simple import test ==="
         
-        cat > test-updated.js << 'EOF'
-        import http from 'k6/http';
-        import { check } from 'k6';
-        
-        console.log('Testing updated endpoints...');
+        cat > simple-test.js << 'EOF'
+        console.log('Testing imports...');
         
         try {
           const endpoints = await import('utils/config/endpoints.js');
-          console.log('✅ endpoints.js imported successfully');
-          console.log('Available functions:', Object.keys(endpoints));
+          console.log('✅ SUCCESS! Endpoints imported');
+          console.log('Functions found:', Object.keys(endpoints).length);
           
-          // Test DummyJSON endpoints
-          console.log('\n1. Testing DummyJSON endpoints:');
-          const productsUrl = endpoints.getProductsEndpoint(5, 0);
-          console.log('Products URL:', productsUrl);
+          // Test a few functions
+          const url1 = endpoints.getProductsEndpoint(5, 0);
+          console.log('Products URL:', url1);
           
-          const res1 = http.get(productsUrl);
-          check(res1, { 'DummyJSON works': (r) => r.status === 200 });
-          
-          // Test Pet Store endpoints
-          console.log('\n2. Testing Pet Store endpoints:');
-          const petUrl = endpoints.findByStatusEndpoint('available');
-          console.log('Pet URL:', petUrl);
-          
-          const res2 = http.get(petUrl);
-          console.log('Pet store status:', res2.status);
-          
-          // Test helper functions
-          console.log('\n3. Testing helper functions:');
-          const paramsUrl = endpoints.getProductsWithParams({ limit: 3, skip: 10 });
-          console.log('With params:', paramsUrl);
-          
-          const paginated = endpoints.getPaginatedEndpoint('https://dummyjson.com/products', 2, 5);
-          console.log('Paginated:', paginated);
+          const url2 = endpoints.findByStatusEndpoint('available');
+          console.log('Pet store URL:', url2);
           
         } catch (e) {
-          console.log('❌ Error:', e.message);
+          console.log('❌ FAILED:', e.message);
           console.log('Stack:', e.stack);
         }
         
         export default function() {
-          console.log('Test iteration');
+          console.log('Test complete');
         }
         EOF
         
-        k6 run test-updated.js
+        k6 run simple-test.js
+    
+    - name: Test original smoke test path
+      run: |
+        echo "=== Testing smoke test import path ==="
+        
+        # Create a test at smoke test location
+        mkdir -p tests/smoke-test
+        cat > tests/smoke-test/test-path.js << 'EOF'
+        console.log('Testing from smoke test perspective...');
+        
+        const paths = [
+          '../../../utils/config/endpoints.js',  // Original path
+          '../../utils/config/endpoints.js',     // Alternative
+          'utils/config/endpoints.js'            // Absolute from root
+        ];
+        
+        for (const path of paths) {
+          console.log(`\nTrying: ${path}`);
+          try {
+            const mod = await import(path);
+            console.log(`✅ Works! Found ${Object.keys(mod).length} functions`);
+            break;
+          } catch (e) {
+            console.log(`❌ Failed: ${e.message}`);
+          }
+        }
+        
+        export default function() {}
+        EOF
+        
+        # Run from project root
+        k6 run tests/smoke-test/test-path.js
+    
+    - name: Create final working smoke test
+      run: |
+        echo "=== Creating final working smoke test ==="
+        
+        cat > tests/smoke-dummyjson-final.js << 'EOF'
+        import http from 'k6/http';
+        import { check, sleep } from 'k6';
+        
+        // Use the CORRECT import path for smoke directory
+        // From tests/smoke/ to utils/config/ is: ../../utils/config/
+        import { 
+          getProductsEndpoint,
+          getProductByIdEndpoint,
+          searchProductsEndpoint
+        } from '../../utils/config/endpoints.js';
+        
+        // Hardcode simple options for now
+        export const options = {
+          vus: 2,
+          duration: '10s'
+        };
+        
+        export default function () {
+          // Test 1: Get products
+          const productsUrl = getProductsEndpoint(5, 0);
+          const products = http.get(productsUrl);
+          
+          check(products, {
+            'status 200': (r) => r.status === 200,
+            'has products': (r) => {
+              try {
+                const body = JSON.parse(r.body);
+                return body.products && body.products.length > 0;
+              } catch {
+                return false;
+              }
+            }
+          });
+          
+          // Test 2: Get single product
+          const productId = Math.floor(Math.random() * 10) + 1;
+          const productUrl = getProductByIdEndpoint(productId);
+          const product = http.get(productUrl);
+          
+          check(product, {
+            'product status 200': (r) => r.status === 200
+          });
+          
+          sleep(1);
+        }
+        EOF
+        
+        echo "✅ Created final smoke test at: tests/smoke-dummyjson-final.js"
+        
+    - name: Run final smoke test
+      run: |
+        echo "=== Running final smoke test ==="
+        k6 run tests/smoke-dummyjson-final.js
