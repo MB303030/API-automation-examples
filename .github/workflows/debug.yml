@@ -1,70 +1,212 @@
-# .github/workflows/single-file-test.yml
-name: Single File Test
+# .github/workflows/update-endpoints.yml
+name: Update Endpoints.js
 
 on: [workflow_dispatch]
 
 jobs:
-  single-file:
+  update-endpoints:
     runs-on: ubuntu-latest
     
     steps:
     - uses: actions/checkout@v4
     
-    - name: Create combined test file
+    - name: Update endpoints.js
       run: |
-        # Combine endpoints.js and env.js into one file
-        cat > combined-test.js << 'EOF'
-        import http from 'k6/http';
-        import { check } from 'k6';
+        echo "=== Updating endpoints.js ==="
         
-        // Copy the content of env.js here
-        function getApiUrl(service, path) {
-          const baseUrls = {
-            dummyjson: 'https://dummyjson.com',
-            pet: 'https://petstore.swagger.io/v2',
-            postman: 'https://postman-echo.com'
-          };
-          
-          const baseUrl = baseUrls[service] || 'https://dummyjson.com';
-          return `${baseUrl}${path}`;
+        # Backup current
+        cp utils/config/endpoints.js utils/config/endpoints.js.backup
+        
+        # Create updated version
+        cat > utils/config/endpoints.js << 'EOF'
+        import { getApiUrl } from './env.js';
+
+        /* ─────────────────────────────
+           PET SERVICE ENDPOINTS
+        ───────────────────────────── */
+        export function findByStatusEndpoint(status = 'available') {
+          const safeStatus = encodeURIComponent(status);
+          return getApiUrl('petstore', `/pet/findByStatus?status=${safeStatus}`);
         }
-        
-        // Copy the functions from endpoints.js here
-        function getProductsEndpoint(limit = 30, skip = 0) {
+
+        export function storeInventoryEndpoint() {
+          return getApiUrl('petstore', '/store/inventory');
+        }
+
+        /* ─────────────────────────────
+           POSTMAN ECHO ENDPOINTS
+        ───────────────────────────── */
+        export function postmanInfoEndpoint() {
+          return getApiUrl('postman', '/info');
+        }
+
+        export function postmanInfoPutEndpoint(id = 1) {
+          return getApiUrl('postman', `/info?id=${encodeURIComponent(id)}`);
+        }
+
+        export function postmanInfoDeleteEndpoint(id = 12345) {
+          return getApiUrl('postman', `/info?id=${encodeURIComponent(id)}`);
+        }
+
+        /* ─────────────────────────────
+           DUMMYJSON ENDPOINTS - COMPLETE SET
+        ───────────────────────────── */
+        export function getProductsEndpoint(limit = 30, skip = 0) {
           return getApiUrl('dummyjson', `/products?limit=${limit}&skip=${skip}`);
         }
-        
-        function getProductByIdEndpoint(id) {
+
+        export function getProductByIdEndpoint(id) {
           return getApiUrl('dummyjson', `/products/${id}`);
         }
-        
-        function searchProductsEndpoint(term) {
+
+        export function searchProductsEndpoint(term) {
           return getApiUrl('dummyjson', `/products/search?q=${encodeURIComponent(term)}`);
         }
-        
-        console.log('=== COMBINED TEST ===');
-        
-        // Test the functions
-        const url = getProductsEndpoint(5, 0);
-        console.log('Generated URL:', url);
-        
-        const res = http.get(url);
-        check(res, {
-          'status 200': (r) => r.status === 200
-        });
-        
-        console.log('Response status:', res.status);
-        
-        export default function() {
-          console.log('Iteration');
+
+        export function getProductsByCategoryEndpoint(category) {
+          return getApiUrl('dummyjson', `/products/category/${encodeURIComponent(category)}`);
+        }
+
+        export function getAllCategoriesEndpoint() {
+          return getApiUrl('dummyjson', '/products/categories');
+        }
+
+        export function addNewProductEndpoint() {
+          return getApiUrl('dummyjson', '/products/add');
+        }
+
+        export function updateProductEndpoint(id) {
+          return getApiUrl('dummyjson', `/products/${id}`);
+        }
+
+        /* ─────────────────────────────
+           HELPER FUNCTIONS
+        ───────────────────────────── */
+
+        /**
+         * Helper to build query string parameters
+         */
+        export function buildQueryString(params) {
+          const queryParams = new URLSearchParams();
+          
+          Object.entries(params).forEach(([key, value]) => {
+            if (value !== undefined && value !== null) {
+              queryParams.append(key, value);
+            }
+          });
+          
+          return queryParams.toString();
+        }
+
+        /**
+         * Create endpoint with query parameters
+         */
+        export function endpointWithParams(baseEndpoint, queryParams) {
+          const queryString = buildQueryString(queryParams);
+          return queryString ? `${baseEndpoint}?${queryString}` : baseEndpoint;
+        }
+
+        /**
+         * Get products endpoint with custom query parameters
+         */
+        export function getProductsWithParams(options = {}) {
+          const baseUrl = getApiUrl('dummyjson', '/products');
+          return endpointWithParams(baseUrl, options);
+        }
+
+        /**
+         * Get paginated endpoint
+         */
+        export function getPaginatedEndpoint(endpoint, page = 1, perPage = 10) {
+          const skip = (page - 1) * perPage;
+          const limit = perPage;
+          
+          const separator = endpoint.includes('?') ? '&' : '?';
+          return `${endpoint}${separator}skip=${skip}&limit=${limit}`;
         }
         EOF
         
-        echo "Created combined test file"
+        echo "✅ Updated endpoints.js"
+        
+    - name: Ensure clean env.js exists
+      run: |
+        if [ ! -f utils/config/env.js ] || grep -q "export default function" utils/config/env.js; then
+          echo "Creating clean env.js..."
+          cat > utils/config/env.js << 'EOF'
+          const baseUrls = {
+            dummyjson: 'https://dummyjson.com',
+            petstore: 'https://petstore.swagger.io/v2',
+            pet: 'https://petstore.swagger.io/v2',
+            postman: 'https://postman-echo.com',
+            echo: 'https://postman-echo.com',
+            github: 'https://api.github.com',
+            jsonplaceholder: 'https://jsonplaceholder.typicode.com',
+            reqres: 'https://reqres.in/api',
+            local: 'http://localhost:3000'
+          };
+
+          export function getApiUrl(service, path) {
+            const baseUrl = baseUrls[service] || baseUrls.dummyjson;
+            const normalizedPath = path.startsWith('/') ? path : \`/\${path}\`;
+            return \`\${baseUrl}\${normalizedPath}\`;
+          }
+
+          export function getBaseUrl(service) {
+            return baseUrls[service] || baseUrls.dummyjson;
+          }
+          EOF
+        fi
     
-    - name: Run combined test
+    - name: Test the updated setup
       uses: grafana/setup-k6-action@v1
       
-    - name: Execute test
+    - name: Run comprehensive test
       run: |
-        k6 run combined-test.js
+        echo "=== Testing updated endpoints.js ==="
+        
+        cat > test-updated.js << 'EOF'
+        import http from 'k6/http';
+        import { check } from 'k6';
+        
+        console.log('Testing updated endpoints...');
+        
+        try {
+          const endpoints = await import('utils/config/endpoints.js');
+          console.log('✅ endpoints.js imported successfully');
+          console.log('Available functions:', Object.keys(endpoints));
+          
+          // Test DummyJSON endpoints
+          console.log('\n1. Testing DummyJSON endpoints:');
+          const productsUrl = endpoints.getProductsEndpoint(5, 0);
+          console.log('Products URL:', productsUrl);
+          
+          const res1 = http.get(productsUrl);
+          check(res1, { 'DummyJSON works': (r) => r.status === 200 });
+          
+          // Test Pet Store endpoints
+          console.log('\n2. Testing Pet Store endpoints:');
+          const petUrl = endpoints.findByStatusEndpoint('available');
+          console.log('Pet URL:', petUrl);
+          
+          const res2 = http.get(petUrl);
+          console.log('Pet store status:', res2.status);
+          
+          // Test helper functions
+          console.log('\n3. Testing helper functions:');
+          const paramsUrl = endpoints.getProductsWithParams({ limit: 3, skip: 10 });
+          console.log('With params:', paramsUrl);
+          
+          const paginated = endpoints.getPaginatedEndpoint('https://dummyjson.com/products', 2, 5);
+          console.log('Paginated:', paginated);
+          
+        } catch (e) {
+          console.log('❌ Error:', e.message);
+          console.log('Stack:', e.stack);
+        }
+        
+        export default function() {
+          console.log('Test iteration');
+        }
+        EOF
+        
+        k6 run test-updated.js
