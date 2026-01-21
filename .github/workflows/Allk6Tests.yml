@@ -60,7 +60,10 @@ jobs:
       if: steps.test-config.outputs.RUN_ALL == 'false'
       run: |
         echo "🚀 Running ${{ steps.test-config.outputs.TEST_NAME }}..."
-        docker run --rm -i grafana/k6 run - < ${{ steps.test-config.outputs.TEST_FILE }} 2>&1 | tee k6-output.txt
+        echo "Test file: ${{ steps.test-config.outputs.TEST_FILE }}"
+        
+        # Use volume mounting instead of stdin
+        docker run --rm -v $(pwd):/scripts -w /scripts grafana/k6 run ${{ steps.test-config.outputs.TEST_FILE }} 2>&1 | tee k6-output.txt
     
     - name: Run All Tests
       if: steps.test-config.outputs.RUN_ALL == 'true'
@@ -68,48 +71,36 @@ jobs:
         echo "🚀 Running ALL Available Tests..."
         echo "=================================="
         
-        # Only run tests that actually exist
-        TESTS_TO_RUN=""
-        
-        if [ -f "tests/performance/load/dummyjson-load.js" ]; then
-          TESTS_TO_RUN="$TESTS_TO_RUN load"
-          echo "✅ Will run: Load Test"
-        fi
-        
-        if [ -f "tests/performance/spike/dummyjson-spike.js" ]; then
-          TESTS_TO_RUN="$TESTS_TO_RUN spike"
-          echo "✅ Will run: Spike Test"
-        fi
-        
-        if [ -z "$TESTS_TO_RUN" ]; then
-          echo "❌ No test files found!"
-          exit 1
-        fi
-        
-        echo "Tests to run:$TESTS_TO_RUN"
-        echo ""
-        
         # Create combined output
         echo "# All K6 Performance Tests Report" > k6-output.txt
         echo "Generated: $(date)" >> k6-output.txt
         echo "==================================" >> k6-output.txt
         
-        # Run each test
-        for TEST_TYPE in $TESTS_TO_RUN; do
-          TEST_FILE="tests/performance/$TEST_TYPE/dummyjson-$TEST_TYPE.js"
+        # Run Load Test
+        if [ -f "tests/performance/load/dummyjson-load.js" ]; then
           echo "" >> k6-output.txt
           echo "==================================" >> k6-output.txt
-          echo "TEST: $TEST_TYPE Test" >> k6-output.txt
-          echo "FILE: $TEST_FILE" >> k6-output.txt
+          echo "TEST: Load Test" >> k6-output.txt
+          echo "FILE: tests/performance/load/dummyjson-load.js" >> k6-output.txt
           echo "==================================" >> k6-output.txt
           
-          echo "🧪 Running $TEST_TYPE Test..."
+          echo "🧪 Running Load Test..."
+          docker run --rm -v $(pwd):/scripts -w /scripts grafana/k6 run tests/performance/load/dummyjson-load.js 2>&1 >> k6-output.txt
+          echo "✅ Load Test completed"
+        fi
+        
+        # Run Spike Test  
+        if [ -f "tests/performance/spike/dummyjson-spike.js" ]; then
+          echo "" >> k6-output.txt
+          echo "==================================" >> k6-output.txt
+          echo "TEST: Spike Test" >> k6-output.txt
+          echo "FILE: tests/performance/spike/dummyjson-spike.js" >> k6-output.txt
+          echo "==================================" >> k6-output.txt
           
-          # Use the same Docker command as single test
-          docker run --rm -i grafana/k6 run - < "$TEST_FILE" 2>&1 >> k6-output.txt
-          
-          echo "✅ $TEST_TYPE Test completed"
-        done
+          echo "🧪 Running Spike Test..."
+          docker run --rm -v $(pwd):/scripts -w /scripts grafana/k6 run tests/performance/spike/dummyjson-spike.js 2>&1 >> k6-output.txt
+          echo "✅ Spike Test completed"
+        fi
         
         echo "" >> k6-output.txt
         echo "==================================" >> k6-output.txt
