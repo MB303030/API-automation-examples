@@ -10,7 +10,8 @@ import {
 // Load traffic patterns from file
 //const trafficData = JSON.parse(open('../../test-data/trafficPatterns.json'));
 
-const trafficData = JSON.parse(open('./test-data/trafficPatterns.json'));
+// Get the absolute path to your project
+const trafficData = JSON.parse(open('/full/path/to/API_PROJECT/test-data/trafficPatterns.json'));
 
 
 /**
