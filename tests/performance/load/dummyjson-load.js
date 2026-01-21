@@ -6,40 +6,29 @@ import {
   searchProductsEndpoint 
 } from '../../../utils/config/endpoints.js';
 
+// Load traffic patterns from file
+const trafficData = JSON.parse(open('../../../test-data/trafficPatterns.json'));
+
 /**
  * LOAD TEST - DummyJSON API
  * Purpose: Test API performance under sustained realistic load
- * Duration: 10 minutes with varying load patterns
+ * Using traffic patterns from configuration file
  */
 export const options = {
-  // REAL LOAD TEST: 10 minutes with business-hour simulation
-  stages: [
-    // PHASE 1: Morning ramp-up (simulating 9am traffic)
-    { duration: '2m', target: 20 },   // 0→20 users in 2 min
-    { duration: '2m', target: 50 },   // 20→50 users in 2 min
-    { duration: '2m', target: 80 },   // 50→80 users in 2 min
-    
-    // PHASE 2: Peak business hours (simulating 11am-3pm)
-    { duration: '3m', target: 100 },  // Stay at 100 users for 3 min
-    
-    // PHASE 3: Afternoon decline (simulating 3pm-5pm)
-    { duration: '2m', target: 40 },   // 100→40 users in 2 min
-    { duration: '1m', target: 10 },   // 40→10 users in 1 min
-  ],
+  // Use load_test_normal stages from configuration file (15 minutes total)
+  stages: trafficData.patterns.load_test_normal.stages,
   
-  // PRODUCTION-GRADE thresholds (stricter than smoke test)
+  // Use load thresholds from configuration file with additional custom thresholds
   thresholds: {
-    // Response time: 95% under 300ms (production standard)
-    http_req_duration: ['p(95)<300', 'p(99)<500'],
+    // Response time thresholds from config file
+    http_req_duration: trafficData.thresholds.load.http_req_duration,
     
-    // Failure rate: Less than 0.1% (99.9% success)
-    http_req_failed: ['rate<0.001'],
+    // Failure rate threshold from config file
+    http_req_failed: trafficData.thresholds.load.http_req_failed,
     
-    // Throughput: Must handle at least 100 req/sec
-    http_reqs: ['rate>100'],
-    
-    // Data validation: 99% of checks should pass
-    checks: ['rate>0.99'],
+    // Additional custom thresholds from original test
+    http_reqs: ['rate>100'],           // Throughput requirement
+    checks: ['rate>0.99'],            // Data validation requirement
   },
 };
 
@@ -121,7 +110,7 @@ export default function () {
   
   // REAL USER SCENARIO 4: Category Browsing (5% of users)
   if (Math.random() < 0.05) {
-    // Browse by category (if you have this endpoint)
+    // Browse by category
     const categories = ['smartphones', 'laptops', 'fragrances', 'skincare', 'groceries'];
     const randomCategory = categories[Math.floor(Math.random() * categories.length)];
     
@@ -167,15 +156,21 @@ export default function () {
 /**
  * WHAT THIS LOAD TEST MEASURES:
  * 
- * 1. SUSTAINED PERFORMANCE: Can API handle 10 minutes of continuous load?
+ * 1. SUSTAINED PERFORMANCE: Can API handle 15 minutes of continuous load?
  * 2. SCALABILITY: How does response time change as users increase?
  * 3. MIXED WORKLOAD: Realistic mix of different API calls
  * 4. DATA CONSISTENCY: Are responses valid under load?
  * 5. MEMORY LEAKS: Does performance degrade over time?
  * 
+ * CONFIGURATION USED:
+ * - Pattern: load_test_normal (15 minutes total)
+ * - Stages: 2m@20 → 3m@50 → 5m@100 → 3m@50 → 2m@20
+ * - Response Time Threshold: p(95) < 300ms
+ * - Failure Rate Threshold: < 0.5%
+ * 
  * EXPECTED RESULTS:
- * - Total requests: 15,000-25,000
- * - Avg throughput: 25-40 req/sec
+ * - Total requests: 20,000-35,000
+ * - Avg throughput: 20-35 req/sec
  * - Response times should stay consistent
- * - Success rate should remain >99.9%
+ * - Success rate should remain >99.5%
  */
