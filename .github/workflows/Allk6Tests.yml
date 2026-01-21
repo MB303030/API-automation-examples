@@ -1,0 +1,191 @@
+name: ALL K6 Performance Test
+
+on:
+  push:
+    branches: [ main, develop ]
+  pull_request:
+    branches: [ main ]
+  workflow_dispatch:
+    inputs:
+      test_type:
+        description: 'Select which performance test to run'
+        required: true
+        default: 'all'
+        type: choice
+        options:
+          - all
+          - smoke
+          - load
+          - spike
+          - stress
+      api_target:
+        description: 'Select which API to test'
+        required: true
+        default: 'dummyjson'
+        type: choice
+        options:
+          - dummyjson
+          - petstore
+          - postman
+
+jobs:
+  performance-test:
+    runs-on: ubuntu-latest
+    name: Performance Test - ${{ github.event.inputs.test_type || 'all' }}
+    
+    steps:
+    - uses: actions/checkout@v4
+    
+    - name: Setup Test Matrix
+      id: setup
+      run: |
+        # Determine which tests to run
+        TEST_TYPE="${{ github.event.inputs.test_type || 'all' }}"
+        API_TARGET="${{ github.event.inputs.api_target || 'dummyjson' }}"
+        
+        # Create test matrix
+        TESTS_TO_RUN=()
+        
+        if [ "$TEST_TYPE" = "all" ]; then
+          TESTS_TO_RUN=("smoke" "load" "spike" "stress")
+        else
+          TESTS_TO_RUN=("$TEST_TYPE")
+        fi
+        
+        # Save to outputs
+        echo "tests=${TESTS_TO_RUN[*]}" >> $GITHUB_OUTPUT
+        echo "api_target=$API_TARGET" >> $GITHUB_OUTPUT
+        echo "matrix_count=${#TESTS_TO_RUN[@]}" >> $GITHUB_OUTPUT
+        
+        echo "📊 Test Configuration:"
+        echo "Tests to run: ${TESTS_TO_RUN[*]}"
+        echo "API target: $API_TARGET"
+        echo "Total tests: ${#TESTS_TO_RUN[@]}"
+    
+    - name: Run Performance Tests
+      id: run-tests
+      run: |
+        TESTS=(${{ steps.setup.outputs.tests }})
+        API_TARGET="${{ steps.setup.outputs.api_target }}"
+        
+        echo "🧪 Running ${#TESTS[@]} test(s) for $API_TARGET"
+        echo "================================================"
+        
+        RESULTS=""
+        FAILED_TESTS=""
+        
+        for TEST_TYPE in "${TESTS[@]}"; do
+          echo ""
+          echo "🚀 Running $TEST_TYPE test for $API_TARGET..."
+          echo "----------------------------------------"
+          
+          TEST_FILE="tests/performance/$TEST_TYPE/${API_TARGET}-${TEST_TYPE}.js"
+          
+          if [ ! -f "$TEST_FILE" ]; then
+            echo "❌ Test file not found: $TEST_FILE"
+            FAILED_TESTS="$FAILED_TESTS $TEST_TYPE"
+            continue
+          fi
+          
+          # Run test with Docker
+          START_TIME=$(date +%s)
+          
+          OUTPUT=$(docker run --rm -i -v $(pwd):/scripts grafana/k6 run /scripts/$TEST_FILE 2>&1) || TEST_FAILED=true
+          
+          END_TIME=$(date +%s)
+          DURATION=$((END_TIME - START_TIME))
+          
+          # Extract key metrics
+          HTTP_REQS=$(echo "$OUTPUT" | grep "http_reqs" | tail -1 | awk '{print $2}' | tr -d ',' || echo "0")
+          AVG_DURATION=$(echo "$OUTPUT" | grep "http_req_duration.*avg=" | tail -1 | sed 's/.*avg=//' | awk '{print $1}' || echo "N/A")
+          SUCCESS_RATE=$(echo "$OUTPUT" | grep "checks" | tail -1 | awk '{print $2}' | tr -d ',' || echo "N/A")
+          
+          # Check if thresholds were crossed
+          if echo "$OUTPUT" | grep -q "thresholds on metrics.*have been crossed"; then
+            STATUS="❌ FAILED"
+            FAILED_TESTS="$FAILED_TESTS $TEST_TYPE"
+          else
+            STATUS="✅ PASSED"
+          fi
+          
+          # Save result
+          RESULT="| $TEST_TYPE | $API_TARGET | $HTTP_REQS | $AVG_DURATION | $SUCCESS_RATE | ${DURATION}s | $STATUS |"
+          RESULTS="$RESULTS\n$RESULT"
+          
+          echo "   Status: $STATUS"
+          echo "   Duration: ${DURATION}s"
+          echo "   Requests: $HTTP_REQS"
+          echo "   Avg Response: $AVG_DURATION"
+          echo "   Success Rate: $SUCCESS_RATE"
+          
+          # Save individual test output
+          echo "$OUTPUT" > "test-results/${API_TARGET}-${TEST_TYPE}-$(date +%s).log"
+        done
+        
+        echo ""
+        echo "📊 All Tests Completed"
+        echo "======================"
+        
+        # Save results to outputs
+        echo "results<<EOF" >> $GITHUB_OUTPUT
+        echo "$RESULTS" >> $GITHUB_OUTPUT
+        echo "EOF" >> $GITHUB_OUTPUT
+        
+        echo "failed_tests=$FAILED_TESTS" >> $GITHUB_OUTPUT
+        
+        # Exit with error if any test failed
+        if [ -n "$FAILED_TESTS" ]; then
+          echo "❌ Some tests failed: $FAILED_TESTS"
+          exit 1
+        fi
+    
+    - name: Generate Summary Report
+      if: always()
+      run: |
+        echo "## 🧪 Performance Test Results" >> $GITHUB_STEP_SUMMARY
+        echo "" >> $GITHUB_STEP_SUMMARY
+        echo "**Test Configuration:**" >> $GITHUB_STEP_SUMMARY
+        echo "- API Target: ${{ steps.setup.outputs.api_target }}" >> $GITHUB_STEP_SUMMARY
+        echo "- Tests Run: ${{ steps.setup.outputs.tests }}" >> $GITHUB_STEP_SUMMARY
+        echo "" >> $GITHUB_STEP_SUMMARY
+        
+        echo "### 📊 Test Results Summary" >> $GITHUB_STEP_SUMMARY
+        echo "" >> $GITHUB_STEP_SUMMARY
+        echo "| Test Type | API | Requests | Avg Response | Success Rate | Duration | Status |" >> $GITHUB_STEP_SUMMARY
+        echo "|-----------|-----|----------|--------------|--------------|----------|--------|" >> $GITHUB_STEP_SUMMARY
+        
+        # Parse and display results
+        RESULTS="${{ steps.run-tests.outputs.results }}"
+        echo "$RESULTS" >> $GITHUB_STEP_SUMMARY
+        
+        echo "" >> $GITHUB_STEP_SUMMARY
+        
+        # Show failed tests if any
+        FAILED_TESTS="${{ steps.run-tests.outputs.failed_tests }}"
+        if [ -n "$FAILED_TESTS" ]; then
+          echo "### ⚠️ Failed Tests" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "The following tests failed: $FAILED_TESTS" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "Check the logs for details:" >> $GITHUB_STEP_SUMMARY
+          echo '```bash' >> $GITHUB_STEP_SUMMARY
+          echo "ls -la test-results/" >> $GITHUB_STEP_SUMMARY
+          echo '```' >> $GITHUB_STEP_SUMMARY
+        else
+          echo "### ✅ All Tests Passed!" >> $GITHUB_STEP_SUMMARY
+        fi
+        
+        echo "" >> $GITHUB_STEP_SUMMARY
+        echo "---" >> $GITHUB_STEP_SUMMARY
+        echo "*Generated at: $(date)*" >> $GITHUB_STEP_SUMMARY
+        echo "*Workflow: ${{ github.workflow }}*" >> $GITHUB_STEP_SUMMARY
+        echo "*Triggered by: ${{ github.event_name }}*" >> $GITHUB_STEP_SUMMARY
+    
+    - name: Upload Test Results
+      if: always()
+      uses: actions/upload-artifact@v3
+      with:
+        name: k6-test-results
+        path: |
+          test-results/
+        retention-days: 30
