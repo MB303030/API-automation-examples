@@ -6,11 +6,10 @@ on:
       test_type:
         description: 'Select which performance test to run'
         required: true
-        default: 'all'  # Changed default
+        default: 'all'
         type: choice
         options:
-          - all      # ADDED THIS
-          - smoke
+          - all
           - load
           - spike
 
@@ -27,18 +26,9 @@ jobs:
         TEST_TYPE="${{ github.event.inputs.test_type }}"
         
         case $TEST_TYPE in
-          "all")  # ADDED THIS CASE
+          "all")
             echo "RUN_ALL=true" >> $GITHUB_OUTPUT
-            echo "TEST_NAME=All Performance Tests" >> $GITHUB_OUTPUT
-            ;;
-          "smoke")
-            echo "RUN_ALL=false" >> $GITHUB_OUTPUT
-            echo "TEST_FILE=tests/performance/smoke/dummyjson-smoke.js" >> $GITHUB_OUTPUT
-            echo "TEST_NAME=Smoke Test" >> $GITHUB_OUTPUT
-            echo "CHART_TITLE=Smoke Test: 2 Users, 30s" >> $GITHUB_OUTPUT
-            echo "CHART_X_AXIS=[0s, 30s]" >> $GITHUB_OUTPUT
-            echo "CHART_DATA=[2, 2]" >> $GITHUB_OUTPUT
-            echo "CHART_MAX=5" >> $GITHUB_OUTPUT
+            echo "TEST_NAME=All Available Tests (Load + Spike)" >> $GITHUB_OUTPUT
             ;;
           "load")
             echo "RUN_ALL=false" >> $GITHUB_OUTPUT
@@ -75,37 +65,50 @@ jobs:
     - name: Run All Tests
       if: steps.test-config.outputs.RUN_ALL == 'true'
       run: |
-        echo "🚀 Running ALL Performance Tests..."
+        echo "🚀 Running ALL Available Tests..."
         echo "=================================="
         
-        # List of all tests to run
-        TESTS=(
-          "tests/performance/smoke/dummyjson-smoke.js"
-          "tests/performance/load/dummyjson-load.js"
-          "tests/performance/spike/dummyjson-spike.js"
-        )
+        # Only run tests that actually exist
+        TESTS_TO_RUN=""
         
-        # Create combined output file
+        if [ -f "tests/performance/load/dummyjson-load.js" ]; then
+          TESTS_TO_RUN="$TESTS_TO_RUN load"
+          echo "✅ Will run: Load Test"
+        fi
+        
+        if [ -f "tests/performance/spike/dummyjson-spike.js" ]; then
+          TESTS_TO_RUN="$TESTS_TO_RUN spike"
+          echo "✅ Will run: Spike Test"
+        fi
+        
+        if [ -z "$TESTS_TO_RUN" ]; then
+          echo "❌ No test files found!"
+          exit 1
+        fi
+        
+        echo "Tests to run:$TESTS_TO_RUN"
+        echo ""
+        
+        # Create combined output
         echo "# All K6 Performance Tests Report" > k6-output.txt
         echo "Generated: $(date)" >> k6-output.txt
         echo "==================================" >> k6-output.txt
         
-        for TEST_FILE in "${TESTS[@]}"; do
-          TEST_NAME=$(basename "$TEST_FILE" .js)
+        # Run each test
+        for TEST_TYPE in $TESTS_TO_RUN; do
+          TEST_FILE="tests/performance/$TEST_TYPE/dummyjson-$TEST_TYPE.js"
           echo "" >> k6-output.txt
           echo "==================================" >> k6-output.txt
-          echo "TEST: $TEST_NAME" >> k6-output.txt
+          echo "TEST: $TEST_TYPE Test" >> k6-output.txt
           echo "FILE: $TEST_FILE" >> k6-output.txt
           echo "==================================" >> k6-output.txt
           
-          if [ -f "$TEST_FILE" ]; then
-            echo "🧪 Running $TEST_NAME..."
-            docker run --rm -i grafana/k6 run - < "$TEST_FILE" 2>&1 >> k6-output.txt
-            echo "✅ $TEST_NAME completed"
-          else
-            echo "❌ Skipping $TEST_NAME: File not found" >> k6-output.txt
-            echo "❌ Skipping $TEST_NAME: File not found"
-          fi
+          echo "🧪 Running $TEST_TYPE Test..."
+          
+          # Use the same Docker command as single test
+          docker run --rm -i grafana/k6 run - < "$TEST_FILE" 2>&1 >> k6-output.txt
+          
+          echo "✅ $TEST_TYPE Test completed"
         done
         
         echo "" >> k6-output.txt
@@ -124,12 +127,18 @@ jobs:
           echo "### 📊 All Performance Tests Summary" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
           echo "**Tests Executed:**" >> $GITHUB_STEP_SUMMARY
-          echo "- Smoke Test (dummyjson-smoke.js)" >> $GITHUB_STEP_SUMMARY
-          echo "- Load Test (dummyjson-load.js)" >> $GITHUB_STEP_SUMMARY
-          echo "- Spike Test (dummyjson-spike.js)" >> $GITHUB_STEP_SUMMARY
+          
+          if [ -f "tests/performance/load/dummyjson-load.js" ]; then
+            echo "- ✅ Load Test (dummyjson-load.js)" >> $GITHUB_STEP_SUMMARY
+          fi
+          
+          if [ -f "tests/performance/spike/dummyjson-spike.js" ]; then
+            echo "- ✅ Spike Test (dummyjson-spike.js)" >> $GITHUB_STEP_SUMMARY
+          fi
+          
           echo "" >> $GITHUB_STEP_SUMMARY
         else
-          # Dynamic Mermaid Chart based on test type (KEEP ORIGINAL)
+          # Dynamic Mermaid Chart based on test type
           echo "### 📈 Load Pattern: ${{ steps.test-config.outputs.CHART_TITLE }}" >> $GITHUB_STEP_SUMMARY
           echo '```mermaid' >> $GITHUB_STEP_SUMMARY
           echo 'xychart-beta' >> $GITHUB_STEP_SUMMARY
@@ -140,20 +149,11 @@ jobs:
           echo '```' >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
           
-          # Dynamic Phase Table based on test type (KEEP ORIGINAL)
+          # Dynamic Phase Table based on test type
           echo "### ⚙️ Test Configuration: ${{ steps.test-config.outputs.TEST_NAME }}" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
           
-          if [ "${{ github.event.inputs.test_type }}" = "smoke" ]; then
-            echo "| Parameter | Value | Description |" >> $GITHUB_STEP_SUMMARY
-            echo "|-----------|-------|-------------|" >> $GITHUB_STEP_SUMMARY
-            echo "| Test Type | Smoke Test | Basic health check |" >> $GITHUB_STEP_SUMMARY
-            echo "| Duration | 30 seconds | Quick verification |" >> $GITHUB_STEP_SUMMARY
-            echo "| Virtual Users | 2 | Minimal load |" >> $GITHUB_STEP_SUMMARY
-            echo "| Purpose | Verify API is working | Not performance testing |" >> $GITHUB_STEP_SUMMARY
-            echo "| Threshold | p(95) < 2000ms | Lenient response time |" >> $GITHUB_STEP_SUMMARY
-            
-          elif [ "${{ github.event.inputs.test_type }}" = "load" ]; then
+          if [ "${{ github.event.inputs.test_type }}" = "load" ]; then
             echo "| Phase | Duration | Users | Description |" >> $GITHUB_STEP_SUMMARY
             echo "|-------|----------|-------|-------------|" >> $GITHUB_STEP_SUMMARY
             echo "| Morning Ramp-up | 0-2m | 0 → 20 | Business opening |" >> $GITHUB_STEP_SUMMARY
@@ -187,35 +187,35 @@ jobs:
         
         echo "" >> $GITHUB_STEP_SUMMARY
         
-        # Add Results Section (WORKS FOR BOTH SINGLE AND ALL TESTS)
+        # Add Results Section
         echo "### 📊 Test Results" >> $GITHUB_STEP_SUMMARY
         if [ -f "k6-output.txt" ]; then
           echo "✅ ${{ steps.test-config.outputs.TEST_NAME }} completed!" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
           
-          # Extract and display key metrics (WORKS FOR BOTH)
+          # Extract and display key metrics
           echo "**Key Performance Indicators:**" >> $GITHUB_STEP_SUMMARY
           echo '```' >> $GITHUB_STEP_SUMMARY
           
-          # Get total iterations (WORKS FOR BOTH)
+          # Get total iterations
           ITERATIONS=$(grep "iterations.*:" k6-output.txt | tail -1 | awk '{print $2}' | tr -d ',' 2>/dev/null || echo "N/A")
           echo "Total Iterations: $ITERATIONS" >> $GITHUB_STEP_SUMMARY
           
-          # Get HTTP metrics (WORKS FOR BOTH)
+          # Get HTTP metrics
           HTTP_REQS=$(grep "http_reqs.*:" k6-output.txt | tail -1 | awk '{print $2}' | tr -d ',' 2>/dev/null || echo "N/A")
           echo "Total Requests: $HTTP_REQS" >> $GITHUB_STEP_SUMMARY
           
-          # Get response time (WORKS FOR BOTH)
+          # Get response time
           AVG_RESPONSE=$(grep "http_req_duration.*avg=" k6-output.txt | tail -1 | sed 's/.*avg=//' | awk '{print $1}' 2>/dev/null || echo "N/A")
           echo "Avg Response Time: $AVG_RESPONSE" >> $GITHUB_STEP_SUMMARY
           
-          # Get success rate (WORKS FOR BOTH)
+          # Get success rate
           if grep -q "checks_succeeded" k6-output.txt; then
             SUCCESS_RATE=$(grep "checks_succeeded" k6-output.txt | awk '{print $2}' | tr -d ',' 2>/dev/null)
             echo "Success Rate: $SUCCESS_RATE" >> $GITHUB_STEP_SUMMARY
           fi
           
-          # Check thresholds (WORKS FOR BOTH)
+          # Check thresholds
           if grep -q "thresholds on metrics.*have been crossed" k6-output.txt; then
             echo "" >> $GITHUB_STEP_SUMMARY
             echo "⚠️ THRESHOLD VIOLATIONS DETECTED" >> $GITHUB_STEP_SUMMARY
