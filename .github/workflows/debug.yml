@@ -1,99 +1,105 @@
-# .github/workflows/fix-k6-imports.yml
-name: debug k6 Imports
+# .github/workflows/check-actual-files.yml
+name: Check Actual Files
 
 on: [workflow_dispatch]
 
 jobs:
-  fix-imports:
+  check-files:
     runs-on: ubuntu-latest
     
     steps:
     - uses: actions/checkout@v4
     
-    - name: Create experimental directory
+    - name: Examine endpoints.js
       run: |
-        mkdir -p tests/experimental
-    
-    - name: Create debug scripts
+        echo "=== FULL endpoints.js content ==="
+        cat utils/config/endpoints.js
+        echo ""
+        echo "=== Line count ==="
+        wc -l utils/config/endpoints.js
+        echo ""
+        echo "=== Checking syntax ==="
+        
+        # Try to parse as JavaScript
+        if node -c utils/config/endpoints.js; then
+          echo "✅ endpoints.js has valid JavaScript syntax"
+        else
+          echo "❌ endpoints.js has JavaScript syntax error"
+        fi
+        
+        echo ""
+        echo "=== Checking imports ==="
+        grep -n "import" utils/config/endpoints.js
+        
+    - name: Examine env.js
       run: |
-        # Create minimal env.js (without k6 imports)
-        cat > utils/config/env.js << 'EOF'
-        // Pure JavaScript - NO k6 imports!
-        export function getApiUrl(service, path) {
-          const baseUrls = {
-            dummyjson: 'https://dummyjson.com',
-            pet: 'https://petstore.swagger.io/v2',
-            postman: 'https://postman-echo.com'
-          };
-          
-          const baseUrl = baseUrls[service] || 'https://dummyjson.com';
-          return `${baseUrl}${path}`;
-        }
-        EOF
+        echo "=== FULL env.js content ==="
+        cat utils/config/env.js
+        echo ""
+        echo "=== Checking for k6 imports ==="
+        if grep -q "k6" utils/config/env.js; then
+          echo "❌ env.js mentions 'k6'"
+          grep -n "k6" utils/config/env.js
+        else
+          echo "✅ env.js doesn't mention k6"
+        fi
         
-        # Create simple debug test
-        cat > tests/experimental/debug-simple.js << 'EOF'
-        import http from 'k6/http';
-        import { check } from 'k6';
+    - name: Create proper debug test
+      run: |
+        mkdir -p tests/debug
         
-        console.log('=== Simple Debug Test ===');
-        console.log('Testing imports...');
+        cat > tests/debug/proper-debug.js << 'EOF'
+        console.log('=== PROPER DEBUG START ===');
         
+        // Method 1: Try to read the file directly
+        console.log('\n1. Reading endpoints.js file:');
         try {
-          // Try to import endpoints
-          const endpoints = await import('../../../utils/config/endpoints.js');
-          console.log('✅ endpoints.js imported successfully!');
-          console.log('Available functions:', Object.keys(endpoints));
+          const fileContent = open('../../../utils/config/endpoints.js');
+          console.log('✅ File can be opened');
+          console.log('First 500 characters:');
+          console.log(fileContent.substring(0, 500));
           
-          // Test one function
-          const url = endpoints.getProductsEndpoint(5, 0);
-          console.log('Generated URL:', url);
-          
-          // Make a request
-          const res = http.get(url);
-          check(res, {
-            'Request successful': (r) => r.status === 200
-          });
+          // Check for export statements
+          if (fileContent.includes('export')) {
+            console.log('✅ File contains export statements');
+          } else {
+            console.log('❌ File does not contain export statements');
+          }
           
         } catch (e) {
-          console.log('❌ Import failed:', e.message);
-          console.log('Full error:', e.stack);
+          console.log('❌ Cannot open file:', e.message);
         }
         
-        export default function() {
-          console.log('Test completed');
-        }
-        EOF
-        
-        # Create even simpler test
-        cat > tests/experimental/test-import-only.js << 'EOF'
-        console.log('=== Testing ONLY the import ===');
-        
-        // Just try to import, nothing else
+        // Method 2: Try dynamic import
+        console.log('\n2. Trying dynamic import:');
         try {
           const module = await import('../../../utils/config/endpoints.js');
-          console.log('✅ SUCCESS! Import worked');
-          console.log('Exports:', Object.keys(module));
+          console.log('✅ Dynamic import successful!');
+          console.log('Exported functions:', Object.keys(module));
         } catch (e) {
-          console.log('❌ FAILED:', e.message);
-          console.log('Error at line:', e.stack.split('\n')[1]);
+          console.log('❌ Dynamic import failed:');
+          console.log('Error message:', e.message);
+          console.log('Error name:', e.name);
+          console.log('First line of stack:', e.stack ? e.stack.split('\n')[0] : 'No stack');
         }
         
+        // Method 3: Try to import env.js directly
+        console.log('\n3. Checking env.js:');
+        try {
+          const envContent = open('../../../utils/config/env.js');
+          console.log('✅ env.js can be opened');
+          console.log('First 200 chars:', envContent.substring(0, 200));
+        } catch (e) {
+          console.log('❌ Cannot open env.js:', e.message);
+        }
+        
+        console.log('\n=== PROPER DEBUG END ===');
         export default function() {}
         EOF
-        
-    - name: Setup k6
+    
+    - name: Run debug test
       uses: grafana/setup-k6-action@v1
     
-    - name: Run simple import test
+    - name: Execute debug
       run: |
-        echo "=== Running simple import test ==="
-        k6 run tests/experimental/test-import-only.js
-    
-    - name: Check current endpoints.js
-      run: |
-        echo "=== Current endpoints.js content (first 10 lines) ==="
-        head -n 10 utils/config/endpoints.js
-        echo ""
-        echo "=== Does it import env.js correctly? ==="
-        grep -n "import.*env" utils/config/endpoints.js
+        k6 run tests/debug/proper-debug.js
