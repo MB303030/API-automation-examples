@@ -1,196 +1,176 @@
-# .github/workflows/final-fix-all.yml
-name: Final Fix - All Files
+
+name: Test Debug Imports
 
 on: [workflow_dispatch]
 
 jobs:
-  final-fix:
+  test-debug:
     runs-on: ubuntu-latest
     
     steps:
     - uses: actions/checkout@v4
     
-    - name: Create clean env.js
+    - name: Setup directory structure
       run: |
-        echo "=== Creating clean env.js ==="
+        echo "=== Setting up test environment ==="
         
-        # Backup if exists
-        if [ -f utils/config/env.js ]; then
-          cp utils/config/env.js utils/config/env.js.backup-final
-          echo "Backed up existing env.js"
-        fi
+        # Create experimental directory if it doesn't exist
+        mkdir -p tests/experimental
         
-        # Create clean env.js with proper escaping
-        cat > utils/config/env.js << "EOF"
-// utils/config/env.js - Clean configuration
-const baseUrls = {
-  dummyjson: 'https://dummyjson.com',
-  petstore: 'https://petstore.swagger.io/v2',
-  pet: 'https://petstore.swagger.io/v2',
-  postman: 'https://postman-echo.com',
-  echo: 'https://postman-echo.com',
-  github: 'https://api.github.com',
-  jsonplaceholder: 'https://jsonplaceholder.typicode.com',
-  reqres: 'https://reqres.in/api',
-  local: 'http://localhost:3000'
-};
+        # Create the debug script
+        cat > tests/experimental/debug-imports-fixed.js << 'EOF'
+        console.log('=== DEBUGGING IMPORTS FIXED ===\n');
 
-export function getApiUrl(service, path) {
-  const baseUrl = baseUrls[service] || baseUrls.dummyjson;
-  const normalizedPath = path.startsWith('/') ? path : "/" + path;
-  return baseUrl + normalizedPath;
-}
-
-export function getBaseUrl(service) {
-  return baseUrls[service] || baseUrls.dummyjson;
-}
-EOF
-        
-        echo "✅ Created clean env.js"
-        
-    - name: Update endpoints.js with correct service names
-      run: |
-        echo "=== Updating endpoints.js ==="
-        
-        # Backup
-        cp utils/config/endpoints.js utils/config/endpoints.js.backup-final
-        
-        # Read current file and replace 'pet' with 'petstore' for consistency
-        sed -i "s/getApiUrl('pet'/getApiUrl('petstore'/g" utils/config/endpoints.js
-        sed -i "s/getApiUrl(\"pet\"/getApiUrl(\"petstore\"/g" utils/config/endpoints.js
-        
-        echo "✅ Updated service names in endpoints.js"
-        
-    - name: Verify files
-      run: |
-        echo "=== Verifying files ==="
-        echo "env.js:"
-        head -20 utils/config/env.js
-        echo ""
-        echo "endpoints.js (first 20 lines):"
-        head -20 utils/config/endpoints.js
-        
-    - name: Setup k6
-      uses: grafana/setup-k6-action@v1
-      
-    - name: Run simple import test
-      run: |
-        echo "=== Simple import test ==="
-        
-        cat > simple-test.js << 'EOF'
-        console.log('Testing imports...');
-        
-        try {
-          const endpoints = await import('utils/config/endpoints.js');
-          console.log('✅ SUCCESS! Endpoints imported');
-          console.log('Functions found:', Object.keys(endpoints).length);
+        // Helper to test imports
+        async function testImport(path, description) {
+          console.log(\`Testing: \${description}\`);
+          console.log(\`Path: \${path}\`);
           
-          // Test a few functions
-          const url1 = endpoints.getProductsEndpoint(5, 0);
-          console.log('Products URL:', url1);
-          
-          const url2 = endpoints.findByStatusEndpoint('available');
-          console.log('Pet store URL:', url2);
-          
-        } catch (e) {
-          console.log('❌ FAILED:', e.message);
-          console.log('Stack:', e.stack);
-        }
-        
-        export default function() {
-          console.log('Test complete');
-        }
-        EOF
-        
-        k6 run simple-test.js
-    
-    - name: Test original smoke test path
-      run: |
-        echo "=== Testing smoke test import path ==="
-        
-        # Create a test at smoke test location
-        mkdir -p tests/smoke-test
-        cat > tests/smoke-test/test-path.js << 'EOF'
-        console.log('Testing from smoke test perspective...');
-        
-        const paths = [
-          '../../../utils/config/endpoints.js',  // Original path
-          '../../utils/config/endpoints.js',     // Alternative
-          'utils/config/endpoints.js'            // Absolute from root
-        ];
-        
-        for (const path of paths) {
-          console.log(`\nTrying: ${path}`);
           try {
-            const mod = await import(path);
-            console.log(`✅ Works! Found ${Object.keys(mod).length} functions`);
-            break;
+            const module = await import(path);
+            console.log(\`✅ SUCCESS! Module loaded\`);
+            console.log(\`   Exported functions: \${Object.keys(module).join(', ')}\`);
+            
+            // Test if functions work
+            if (module.getProductsEndpoint) {
+              const url = module.getProductsEndpoint(5, 0);
+              console.log(\`   Sample URL: \${url}\`);
+            }
+            
+            return true;
           } catch (e) {
-            console.log(`❌ Failed: ${e.message}`);
+            console.log(\`❌ FAILED: \${e.message || 'Unknown error'}\`);
+            if (e.stack) {
+              console.log(\`   Stack: \${e.stack.split('\\n')[0]}\`);
+            }
+            return false;
           }
         }
-        
-        export default function() {}
-        EOF
-        
-        # Run from project root
-        k6 run tests/smoke-test/test-path.js
-    
-    - name: Create final working smoke test
-      run: |
-        echo "=== Creating final working smoke test ==="
-        
-        cat > tests/smoke-dummyjson-final.js << 'EOF'
-        import http from 'k6/http';
-        import { check, sleep } from 'k6';
-        
-        // Use the CORRECT import path for smoke directory
-        // From tests/smoke/ to utils/config/ is: ../../utils/config/
-        import { 
-          getProductsEndpoint,
-          getProductByIdEndpoint,
-          searchProductsEndpoint
-        } from '../../utils/config/endpoints.js';
-        
-        // Hardcode simple options for now
-        export const options = {
-          vus: 2,
-          duration: '10s'
-        };
-        
-        export default function () {
-          // Test 1: Get products
-          const productsUrl = getProductsEndpoint(5, 0);
-          const products = http.get(productsUrl);
+
+        // Helper to test file access
+        function testFileAccess(path, description) {
+          console.log(\`\\nTesting file: \${description}\`);
+          console.log(\`Path: \${path}\`);
           
-          check(products, {
-            'status 200': (r) => r.status === 200,
-            'has products': (r) => {
-              try {
-                const body = JSON.parse(r.body);
-                return body.products && body.products.length > 0;
-              } catch {
-                return false;
-              }
-            }
-          });
+          try {
+            const content = open(path);
+            const data = JSON.parse(content);
+            console.log(\`✅ SUCCESS! File loaded\`);
+            console.log(\`   Keys: \${Object.keys(data).join(', ')}\`);
+            return true;
+          } catch (e) {
+            console.log(\`❌ FAILED: \${e.message}\`);
+            return false;
+          }
+        }
+
+        // Main test function
+        export default async function() {
+          console.log('Starting import tests...\\n');
           
-          // Test 2: Get single product
-          const productId = Math.floor(Math.random() * 10) + 1;
-          const productUrl = getProductByIdEndpoint(productId);
-          const product = http.get(productUrl);
+          // Test imports from different paths
+          const importTests = [
+            { path: '../../../utils/config/endpoints.js', desc: 'From tests/experimental/' },
+            { path: '../../utils/config/endpoints.js', desc: 'Alternative path' },
+            { path: 'utils/config/endpoints.js', desc: 'From project root' },
+            { path: './utils/config/endpoints.js', desc: 'From project root with ./' },
+          ];
           
-          check(product, {
-            'product status 200': (r) => r.status === 200
-          });
+          let anyImportWorked = false;
+          for (const test of importTests) {
+            const worked = await testImport(test.path, test.desc);
+            if (worked) anyImportWorked = true;
+            console.log('---');
+          }
           
-          sleep(1);
+          // Test file access
+          console.log('\\n=== TESTING FILE ACCESS ===');
+          const fileTests = [
+            { path: 'test-data/trafficPatterns.json', desc: 'Traffic patterns' },
+            { path: './test-data/trafficPatterns.json', desc: 'Traffic patterns with ./' },
+            { path: '../test-data/trafficPatterns.json', desc: 'From parent dir' },
+          ];
+          
+          for (const test of fileTests) {
+            testFileAccess(test.path, test.desc);
+            console.log('---');
+          }
+          
+          // Summary
+          console.log('\\n=== SUMMARY ===');
+          if (anyImportWorked) {
+            console.log('✅ At least one import path works!');
+          } else {
+            console.log('❌ No import paths worked. Check file locations and syntax.');
+          }
+          
+          console.log('\\nTest completed');
         }
         EOF
         
-        echo "✅ Created final smoke test at: tests/smoke-dummyjson-final.js"
+        echo "✅ Created debug script"
         
-    - name: Run final smoke test
+        # Show current structure
+        echo -e "\n=== Current structure ==="
+        echo "Project root: $(pwd)"
+        echo "test-data exists: $(ls -d test-data 2>/dev/null && echo 'YES' || echo 'NO')"
+        echo "utils/config exists: $(ls -d utils/config 2>/dev/null && echo 'YES' || echo 'NO')"
+        
+    - name: Ensure required files exist
       run: |
-        echo "=== Running final smoke test ==="
-        k6 run tests/smoke-dummyjson-final.js
+        echo "=== Checking required files ==="
+        
+        # Check endpoints.js
+        if [ ! -f "utils/config/endpoints.js" ]; then
+          echo "❌ endpoints.js not found at utils/config/endpoints.js"
+          echo "Creating a minimal version..."
+          mkdir -p utils/config
+          cat > utils/config/endpoints.js << 'EOF'
+          export function getProductsEndpoint(limit = 30, skip = 0) {
+            return \`https://dummyjson.com/products?limit=\${limit}&skip=\${skip}\`;
+          }
+          EOF
+        else
+          echo "✅ endpoints.js exists"
+          echo "First 3 lines:"
+          head -3 utils/config/endpoints.js
+        fi
+        
+        # Check env.js
+        if [ ! -f "utils/config/env.js" ]; then
+          echo "⚠️ env.js not found, but endpoints.js might not need it"
+        else
+          echo "✅ env.js exists"
+          # Check if it has k6 imports (which would cause issues)
+          if grep -q "from 'k6'" utils/config/env.js || grep -q 'from "k6"' utils/config/env.js; then
+            echo "❌ env.js imports k6 - this will cause import failures"
+            echo "Creating a clean version..."
+            cat > utils/config/env.js << 'EOF'
+            export function getApiUrl(service, path) {
+              const baseUrls = {
+                dummyjson: 'https://dummyjson.com',
+                petstore: 'https://petstore.swagger.io/v2'
+              };
+              return \`\${baseUrls[service] || 'https://dummyjson.com'}\${path}\`;
+            }
+            EOF
+          fi
+        fi
+        
+        # Check trafficPatterns.json
+        if [ ! -f "test-data/trafficPatterns.json" ]; then
+          echo "⚠️ trafficPatterns.json not found"
+        else
+          echo "✅ trafficPatterns.json exists"
+        fi
+    
+    - name: Setup k6
+      uses: grafana/setup-k6-action@v1
+    
+    - name: Run debug test
+      run: |
+        echo "=== Running debug import test ==="
+        echo "Current directory: $(pwd)"
+        echo ""
+        
+        k6 run tests/experimental/debug-imports-fixed.js --verbose
