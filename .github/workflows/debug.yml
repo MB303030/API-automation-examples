@@ -1,105 +1,99 @@
-# .github/workflows/check-actual-files.yml
-name: Check Actual Files
+# .github/workflows/final-fix.yml
+name: Final Fix
 
 on: [workflow_dispatch]
 
 jobs:
-  check-files:
+  final-fix:
     runs-on: ubuntu-latest
     
     steps:
     - uses: actions/checkout@v4
     
-    - name: Examine endpoints.js
+    - name: Create correct debug script
       run: |
-        echo "=== FULL endpoints.js content ==="
-        cat utils/config/endpoints.js
-        echo ""
-        echo "=== Line count ==="
-        wc -l utils/config/endpoints.js
-        echo ""
-        echo "=== Checking syntax ==="
+        cat > correct-debug.js << 'EOF'
+        console.log('=== CORRECT DEBUG ===');
+        console.log('Running from directory where script is located');
         
-        # Try to parse as JavaScript
-        if node -c utils/config/endpoints.js; then
-          echo "✅ endpoints.js has valid JavaScript syntax"
-        else
-          echo "❌ endpoints.js has JavaScript syntax error"
-        fi
+        // Try MULTIPLE paths
+        const paths = [
+          'utils/config/endpoints.js',           // From project root
+          './utils/config/endpoints.js',         // From project root
+          '../utils/config/endpoints.js',        // From root parent?
+          '../../../utils/config/endpoints.js',  // From tests/debug
+          '../../../../utils/config/endpoints.js' // Maybe?
+        ];
         
-        echo ""
-        echo "=== Checking imports ==="
-        grep -n "import" utils/config/endpoints.js
-        
-    - name: Examine env.js
-      run: |
-        echo "=== FULL env.js content ==="
-        cat utils/config/env.js
-        echo ""
-        echo "=== Checking for k6 imports ==="
-        if grep -q "k6" utils/config/env.js; then
-          echo "❌ env.js mentions 'k6'"
-          grep -n "k6" utils/config/env.js
-        else
-          echo "✅ env.js doesn't mention k6"
-        fi
-        
-    - name: Create proper debug test
-      run: |
-        mkdir -p tests/debug
-        
-        cat > tests/debug/proper-debug.js << 'EOF'
-        console.log('=== PROPER DEBUG START ===');
-        
-        // Method 1: Try to read the file directly
-        console.log('\n1. Reading endpoints.js file:');
-        try {
-          const fileContent = open('../../../utils/config/endpoints.js');
-          console.log('✅ File can be opened');
-          console.log('First 500 characters:');
-          console.log(fileContent.substring(0, 500));
-          
-          // Check for export statements
-          if (fileContent.includes('export')) {
-            console.log('✅ File contains export statements');
-          } else {
-            console.log('❌ File does not contain export statements');
+        for (const path of paths) {
+          console.log(`\nTrying: ${path}`);
+          try {
+            const content = open(path);
+            console.log(`✅ File found! Size: ${content.length} chars`);
+            console.log(`First 50 chars: ${content.substring(0, 50)}...`);
+            
+            // Try to import it
+            try {
+              const module = await import(path);
+              console.log(`✅ Import successful! Functions: ${Object.keys(module).join(', ')}`);
+              break;
+            } catch (importError) {
+              console.log(`❌ Can read but not import: ${importError.message}`);
+            }
+          } catch (openError) {
+            console.log(`❌ Cannot open: ${openError.message}`);
           }
-          
-        } catch (e) {
-          console.log('❌ Cannot open file:', e.message);
         }
         
-        // Method 2: Try dynamic import
-        console.log('\n2. Trying dynamic import:');
+        // Also test from smoke test perspective
+        console.log('\n=== From smoke test perspective ===');
+        console.log('Smoke test path: tests/smoke/dummyjson-smoke.js');
+        console.log('Trying: ../../../utils/config/endpoints.js');
+        
         try {
           const module = await import('../../../utils/config/endpoints.js');
-          console.log('✅ Dynamic import successful!');
-          console.log('Exported functions:', Object.keys(module));
+          console.log('✅ Smoke test import path works!');
         } catch (e) {
-          console.log('❌ Dynamic import failed:');
-          console.log('Error message:', e.message);
-          console.log('Error name:', e.name);
-          console.log('First line of stack:', e.stack ? e.stack.split('\n')[0] : 'No stack');
+          console.log(`❌ Smoke test path fails: ${e.message}`);
         }
         
-        // Method 3: Try to import env.js directly
-        console.log('\n3. Checking env.js:');
-        try {
-          const envContent = open('../../../utils/config/env.js');
-          console.log('✅ env.js can be opened');
-          console.log('First 200 chars:', envContent.substring(0, 200));
-        } catch (e) {
-          console.log('❌ Cannot open env.js:', e.message);
-        }
-        
-        console.log('\n=== PROPER DEBUG END ===');
         export default function() {}
         EOF
     
-    - name: Run debug test
+    - name: Setup and run
       uses: grafana/setup-k6-action@v1
-    
-    - name: Execute debug
+      
+    - name: Run correct debug
       run: |
-        k6 run tests/debug/proper-debug.js
+        echo "=== Running from project root ==="
+        k6 run correct-debug.js
+        
+        echo -e "\n=== Creating test in smoke directory ==="
+        mkdir -p tests/smoke-debug
+        cat > tests/smoke-debug/test-path.js << 'EOF'
+        console.log('Testing from smoke directory...');
+        
+        // What smoke test actually uses
+        console.log('Path used in smoke test: ../../../utils/config/endpoints.js');
+        
+        try {
+          const mod = await import('../../../utils/config/endpoints.js');
+          console.log('✅ Import works from smoke directory!');
+        } catch (e) {
+          console.log('❌ Import fails:', e.message);
+          
+          // Try alternative
+          console.log('\nTrying alternative: utils/config/endpoints.js');
+          try {
+            const mod2 = await import('utils/config/endpoints.js');
+            console.log('✅ Alternative works!');
+          } catch (e2) {
+            console.log('❌ Alternative also fails:', e2.message);
+          }
+        }
+        
+        export default function() {}
+        EOF
+        
+        echo "=== Running from smoke-debug directory ==="
+        k6 run tests/smoke-debug/test-path.js
