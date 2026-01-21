@@ -1,99 +1,153 @@
-# .github/workflows/final-fix.yml
-name: Final Fix
+# .github/workflows/check-file-content.yml
+name: Check File Content
 
 on: [workflow_dispatch]
 
 jobs:
-  final-fix:
+  check-content:
     runs-on: ubuntu-latest
     
     steps:
     - uses: actions/checkout@v4
     
-    - name: Create correct debug script
+    - name: Check endpoints.js file
       run: |
-        cat > correct-debug.js << 'EOF'
-        console.log('=== CORRECT DEBUG ===');
-        console.log('Running from directory where script is located');
-        
-        // Try MULTIPLE paths
-        const paths = [
-          'utils/config/endpoints.js',           // From project root
-          './utils/config/endpoints.js',         // From project root
-          '../utils/config/endpoints.js',        // From root parent?
-          '../../../utils/config/endpoints.js',  // From tests/debug
-          '../../../../utils/config/endpoints.js' // Maybe?
-        ];
-        
-        for (const path of paths) {
-          console.log(`\nTrying: ${path}`);
-          try {
-            const content = open(path);
-            console.log(`✅ File found! Size: ${content.length} chars`);
-            console.log(`First 50 chars: ${content.substring(0, 50)}...`);
-            
-            // Try to import it
-            try {
-              const module = await import(path);
-              console.log(`✅ Import successful! Functions: ${Object.keys(module).join(', ')}`);
-              break;
-            } catch (importError) {
-              console.log(`❌ Can read but not import: ${importError.message}`);
-            }
-          } catch (openError) {
-            console.log(`❌ Cannot open: ${openError.message}`);
-          }
-        }
-        
-        // Also test from smoke test perspective
-        console.log('\n=== From smoke test perspective ===');
-        console.log('Smoke test path: tests/smoke/dummyjson-smoke.js');
-        console.log('Trying: ../../../utils/config/endpoints.js');
-        
-        try {
-          const module = await import('../../../utils/config/endpoints.js');
-          console.log('✅ Smoke test import path works!');
-        } catch (e) {
-          console.log(`❌ Smoke test path fails: ${e.message}`);
-        }
-        
-        export default function() {}
-        EOF
+        echo "=== ENDPOINTS.JS FULL CONTENT ==="
+        echo ""
+        cat utils/config/endpoints.js
+        echo ""
+        echo "=== FILE INFO ==="
+        echo "Size: $(wc -c < utils/config/endpoints.js) bytes"
+        echo "Lines: $(wc -l < utils/config/endpoints.js)"
+        echo ""
+        echo "=== CHECKING FOR IMPORTS ==="
+        grep -n "import" utils/config/endpoints.js || echo "No imports found"
+        echo ""
+        echo "=== CHECKING FOR EXPORTS ==="
+        grep -n "export" utils/config/endpoints.js || echo "No exports found"
+        echo ""
+        echo "=== CHECKING FOR K6 IMPORTS ==="
+        if grep -q "from 'k6'" utils/config/endpoints.js || grep -q 'from "k6"' utils/config/endpoints.js; then
+          echo "❌ endpoints.js imports k6! This is wrong."
+          grep -n "k6" utils/config/endpoints.js
+        else
+          echo "✅ endpoints.js doesn't import k6"
+        fi
     
-    - name: Setup and run
+    - name: Check env.js file
+      run: |
+        echo "=== ENV.JS FULL CONTENT ==="
+        echo ""
+        cat utils/config/env.js
+        echo ""
+        echo "=== FILE INFO ==="
+        echo "Size: $(wc -c < utils/config/env.js) bytes"
+        echo "Lines: $(wc -l < utils/config/env.js)"
+        echo ""
+        echo "=== CHECKING FOR K6 IMPORTS ==="
+        if grep -q "from 'k6'" utils/config/env.js || grep -q 'from "k6"' utils/config/env.js; then
+          echo "❌ env.js imports k6! This is wrong."
+          grep -n "k6" utils/config/env.js
+        else
+          echo "✅ env.js doesn't import k6"
+        fi
+    
+    - name: Test JavaScript syntax
+      run: |
+        echo "=== TESTING JAVASCRIPT SYNTAX ==="
+        
+        # Create a test file
+        cat > test-syntax.js << 'EOF'
+        const fs = require('fs');
+        
+        console.log('Testing endpoints.js syntax...');
+        try {
+          const content = fs.readFileSync('utils/config/endpoints.js', 'utf8');
+          // Check if it's a valid ES module
+          if (!content.includes('export')) {
+            console.log('❌ endpoints.js has no export statements');
+          }
+          if (!content.includes('function') && !content.includes('const') && !content.includes('let')) {
+            console.log('❌ endpoints.js has no function/const/let declarations');
+          }
+          console.log('First 200 chars:', content.substring(0, 200));
+        } catch (e) {
+          console.log('Error reading file:', e.message);
+        }
+        
+        console.log('\nTesting env.js syntax...');
+        try {
+          const content = fs.readFileSync('utils/config/env.js', 'utf8');
+          console.log('First 200 chars:', content.substring(0, 200));
+        } catch (e) {
+          console.log('Error reading file:', e.message);
+        }
+        EOF
+        
+        node test-syntax.js
+    
+    - name: Create a working test
+      run: |
+        echo "=== CREATING WORKING TEST ==="
+        
+        # First, backup original files
+        cp utils/config/endpoints.js utils/config/endpoints.js.backup
+        cp utils/config/env.js utils/config/env.js.backup
+        
+        # Create WORKING endpoints.js
+        cat > utils/config/endpoints.js << 'EOF'
+        // SIMPLE WORKING endpoints.js
+        export function getProductsEndpoint(limit = 30, skip = 0) {
+          return `https://dummyjson.com/products?limit=${limit}&skip=${skip}`;
+        }
+        
+        export function getProductByIdEndpoint(id) {
+          return `https://dummyjson.com/products/${id}`;
+        }
+        
+        export function searchProductsEndpoint(term) {
+          return `https://dummyjson.com/products/search?q=${encodeURIComponent(term)}`;
+        }
+        EOF
+        
+        # Create WORKING env.js (empty since we're not using it)
+        cat > utils/config/env.js << 'EOF'
+        // Empty env.js - endpoints.js doesn't use it now
+        EOF
+        
+        echo "Created simple working files"
+        
+    - name: Test the working files
       uses: grafana/setup-k6-action@v1
       
-    - name: Run correct debug
+    - name: Run test with working files
       run: |
-        echo "=== Running from project root ==="
-        k6 run correct-debug.js
+        echo "=== TESTING WITH WORKING FILES ==="
         
-        echo -e "\n=== Creating test in smoke directory ==="
-        mkdir -p tests/smoke-debug
-        cat > tests/smoke-debug/test-path.js << 'EOF'
-        console.log('Testing from smoke directory...');
-        
-        // What smoke test actually uses
-        console.log('Path used in smoke test: ../../../utils/config/endpoints.js');
+        cat > test-working.js << 'EOF'
+        console.log('Testing with simple endpoints.js...');
         
         try {
-          const mod = await import('../../../utils/config/endpoints.js');
-          console.log('✅ Import works from smoke directory!');
-        } catch (e) {
-          console.log('❌ Import fails:', e.message);
+          const endpoints = await import('utils/config/endpoints.js');
+          console.log('✅ Import successful!');
+          console.log('Functions:', Object.keys(endpoints));
           
-          // Try alternative
-          console.log('\nTrying alternative: utils/config/endpoints.js');
-          try {
-            const mod2 = await import('utils/config/endpoints.js');
-            console.log('✅ Alternative works!');
-          } catch (e2) {
-            console.log('❌ Alternative also fails:', e2.message);
-          }
+          const url = endpoints.getProductsEndpoint(5, 0);
+          console.log('Generated URL:', url);
+          
+        } catch (e) {
+          console.log('❌ Import failed:', e.message);
+          console.log('Stack:', e.stack);
         }
         
         export default function() {}
         EOF
         
-        echo "=== Running from smoke-debug directory ==="
-        k6 run tests/smoke-debug/test-path.js
+        k6 run test-working.js
+    
+    - name: Restore original files
+      if: always()
+      run: |
+        echo "=== RESTORING ORIGINAL FILES ==="
+        mv utils/config/endpoints.js.backup utils/config/endpoints.js 2>/dev/null || true
+        mv utils/config/env.js.backup utils/config/env.js 2>/dev/null || true
