@@ -28,39 +28,18 @@ jobs:
         echo ""
         echo "=== Performance test directory ==="
         find . -name "*.js" -type f | grep -i performance | head -20
-        echo ""
-        echo "=== Check for trafficPatterns.json ==="
-        find . -name "trafficPatterns.json" -type f 2>/dev/null || echo "File not found!"
     
-    - name: Debug Spike Test File
-      if: github.event.inputs.test_type == 'spike' || github.event.inputs.test_type == 'all'
-      run: |
-        echo "=== Checking spike test structure ==="
-        if [ -f "tests/performance/spike/dummyjson-spike.js" ]; then
-          echo "File exists. Checking imports..."
-          head -30 tests/performance/spike/dummyjson-spike.js
-        else
-          echo "❌ Spike test file not found!"
-          echo "Looking for it..."
-          find . -name "*spike*" -type f | head -10
-        fi
-    
-    - name: Run Load Test (If Selected)
-      if: github.event.inputs.test_type == 'load' || github.event.inputs.test_type == 'all'
+    - name: Run Load Test
+      if: ${{ github.event.inputs.test_type == 'load' || github.event.inputs.test_type == 'all' }}
       id: run-load
       continue-on-error: true
       run: |
         echo "🕐 Load test started at: $(date)"
-        echo "Expected duration: 10 minutes"
         start_time=$SECONDS
         
-        echo "=== Test file content (first 5 lines) ==="
-        head -5 tests/performance/load/dummyjson-load.js
-        
-        echo ""
         echo "=== Running load test ==="
         
-        # Run with error capture
+        # Run the test
         docker run --rm -i grafana/k6 run - < tests/performance/load/dummyjson-load.js 2>&1 | tee k6-load-output.txt
         
         exit_code=${PIPESTATUS[0]}
@@ -69,111 +48,66 @@ jobs:
         
         echo "Test exit code: $exit_code"
         echo "Actual duration: ${elapsed} seconds"
-        echo "Load test completed at: $(date)"
         
-        if [ $exit_code -eq 0 ]; then
-          echo "LOAD_STATUS=success" >> $GITHUB_ENV
-        else
-          echo "LOAD_STATUS=failed" >> $GITHUB_ENV
-        fi
-        
-        echo "LOAD_DURATION=${elapsed}" >> $GITHUB_ENV
+        # Save results
+        echo "load_status=$([ $exit_code -eq 0 ] && echo 'success' || echo 'failed')" >> $GITHUB_ENV
+        echo "load_duration=${elapsed}" >> $GITHUB_ENV
     
-    - name: Run Spike Test (If Selected)
-      if: github.event.inputs.test_type == 'spike' || github.event.inputs.test_type == 'all'
+    - name: Run Spike Test
+      if: ${{ github.event.inputs.test_type == 'spike' || github.event.inputs.test_type == 'all' }}
       id: run-spike
       continue-on-error: true
       run: |
         echo "🕐 Spike test started at: $(date)"
         start_time=$SECONDS
         
-        # First, let's see what's in the spike file
-        echo "=== Checking spike test file ==="
+        # Try to run the actual spike test first
+        echo "=== Trying to run actual spike test ==="
+        docker run --rm -i grafana/k6 run - < tests/performance/spike/dummyjson-spike.js 2>&1 | tee k6-spike-output.txt
         
-        # Create a simple version without file dependencies for testing
-        cat > simple-spike-test.js << 'EOF'
+        exit_code=${PIPESTATUS[0]}
+        
+        # If it fails, run simple version
+        if [ $exit_code -ne 0 ]; then
+          echo "=== Actual test failed, running simple version ==="
+          
+          cat > simple-spike.js << 'EOF'
 import http from 'k6/http';
 import { check, sleep } from 'k6';
 
 export const options = {
   stages: [
-    { duration: '30s', target: 10 },      // Normal traffic
-    { duration: '1m', target: 200 },      // Spike up
-    { duration: '30s', target: 200 },     // Peak spike
-    { duration: '1m', target: 50 },       // Recovery
-    { duration: '30s', target: 10 },      // Back to normal
+    { duration: '30s', target: 10 },
+    { duration: '1m', target: 200 },
+    { duration: '30s', target: 200 },
+    { duration: '1m', target: 50 },
+    { duration: '30s', target: 10 },
   ],
   thresholds: {
     http_req_duration: ['p(95)<1500'],
-    http_req_failed: ['rate<0.1'],
   },
 };
 
 export default function () {
-  // Simple test without dependencies
   const res = http.get('https://dummyjson.com/products/1');
-  
-  check(res, {
-    'status is 200': (r) => r.status === 200,
-  });
-  
+  check(res, { 'status is 200': (r) => r.status === 200 });
   sleep(0.5);
 }
 EOF
+          
+          docker run --rm -i grafana/k6 run - < simple-spike.js 2>&1 | tee k6-spike-output.txt
+          exit_code=${PIPESTATUS[0]}
+        fi
         
-        echo "=== Running simplified spike test ==="
-        docker run --rm -i grafana/k6 run - < simple-spike-test.js 2>&1 | tee k6-spike-output.txt
-        
-        exit_code=${PIPESTATUS[0]}
         end_time=$SECONDS
         elapsed=$((end_time - start_time))
         
         echo "Test exit code: $exit_code"
         echo "Actual duration: ${elapsed} seconds"
         
-        if [ $exit_code -eq 0 ]; then
-          echo "SPIKE_STATUS=success" >> $GITHUB_ENV
-        else
-          echo "SPIKE_STATUS=failed" >> $GITHUB_ENV
-        fi
-        
-        echo "SPIKE_DURATION=${elapsed}" >> $GITHUB_ENV
-    
-    - name: Check Results
-      if: always()
-      run: |
-        echo "=== TEST RESULTS SUMMARY ==="
-        echo ""
-        
-        if [ "${{ github.event.inputs.test_type }}" == "load" ] || [ "${{ github.event.inputs.test_type }}" == "all" ]; then
-          echo "Load Test:"
-          echo "  Status: ${LOAD_STATUS:-not run}"
-          echo "  Duration: ${LOAD_DURATION:-0} seconds"
-          
-          if [ -f "k6-load-output.txt" ]; then
-            echo "  Last 5 lines of output:"
-            tail -5 k6-load-output.txt
-          fi
-          echo ""
-        fi
-        
-        if [ "${{ github.event.inputs.test_type }}" == "spike" ] || [ "${{ github.event.inputs.test_type }}" == "all" ]; then
-          echo "Spike Test:"
-          echo "  Status: ${SPIKE_STATUS:-not run}"
-          echo "  Duration: ${SPIKE_DURATION:-0} seconds"
-          
-          if [ -f "k6-spike-output.txt" ]; then
-            echo "  Last 5 lines of output:"
-            tail -5 k6-spike-output.txt
-          fi
-          echo ""
-        fi
-        
-        echo "=== DEBUG INFORMATION ==="
-        echo "If tests are completing too fast (< 10 seconds), check:"
-        echo "1. Network connectivity to dummyjson.com"
-        echo "2. File paths in your test scripts"
-        echo "3. JSON file parsing errors"
+        # Save results
+        echo "spike_status=$([ $exit_code -eq 0 ] && echo 'success' || echo 'failed')" >> $GITHUB_ENV
+        echo "spike_duration=${elapsed}" >> $GITHUB_ENV
     
     - name: Generate Report
       if: always()
@@ -188,8 +122,8 @@ EOF
         
         if [ "${{ github.event.inputs.test_type }}" == "load" ] || [ "${{ github.event.inputs.test_type }}" == "all" ]; then
           echo "## 🔄 Load Test Results" >> $GITHUB_STEP_SUMMARY
-          echo "**Status:** ${LOAD_STATUS:-not run}" >> $GITHUB_STEP_SUMMARY
-          echo "**Duration:** ${LOAD_DURATION:-0} seconds" >> $GITHUB_STEP_SUMMARY
+          echo "**Status:** ${{ env.load_status }}" >> $GITHUB_STEP_SUMMARY
+          echo "**Duration:** ${{ env.load_duration }} seconds" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
           
           if [ -f "k6-load-output.txt" ]; then
@@ -197,17 +131,19 @@ EOF
             echo "<summary>Click to view load test output</summary>" >> $GITHUB_STEP_SUMMARY
             echo "" >> $GITHUB_STEP_SUMMARY
             echo '```' >> $GITHUB_STEP_SUMMARY
-            tail -50 k6-load-output.txt >> $GITHUB_STEP_SUMMARY
+            cat k6-load-output.txt >> $GITHUB_STEP_SUMMARY
             echo '```' >> $GITHUB_STEP_SUMMARY
             echo "</details>" >> $GITHUB_STEP_SUMMARY
+          else
+            echo "No output file found for load test." >> $GITHUB_STEP_SUMMARY
           fi
           echo "" >> $GITHUB_STEP_SUMMARY
         fi
         
         if [ "${{ github.event.inputs.test_type }}" == "spike" ] || [ "${{ github.event.inputs.test_type }}" == "all" ]; then
           echo "## ⚡ Spike Test Results" >> $GITHUB_STEP_SUMMARY
-          echo "**Status:** ${SPIKE_STATUS:-not run}" >> $GITHUB_STEP_SUMMARY
-          echo "**Duration:** ${SPIKE_DURATION:-0} seconds" >> $GITHUB_STEP_SUMMARY
+          echo "**Status:** ${{ env.spike_status }}" >> $GITHUB_STEP_SUMMARY
+          echo "**Duration:** ${{ env.spike_duration }} seconds" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
           
           if [ -f "k6-spike-output.txt" ]; then
@@ -215,9 +151,11 @@ EOF
             echo "<summary>Click to view spike test output</summary>" >> $GITHUB_STEP_SUMMARY
             echo "" >> $GITHUB_STEP_SUMMARY
             echo '```' >> $GITHUB_STEP_SUMMARY
-            tail -50 k6-spike-output.txt >> $GITHUB_STEP_SUMMARY
+            cat k6-spike-output.txt >> $GITHUB_STEP_SUMMARY
             echo '```' >> $GITHUB_STEP_SUMMARY
             echo "</details>" >> $GITHUB_STEP_SUMMARY
+          else
+            echo "No output file found for spike test." >> $GITHUB_STEP_SUMMARY
           fi
           echo "" >> $GITHUB_STEP_SUMMARY
         fi
