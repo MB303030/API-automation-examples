@@ -1,15 +1,12 @@
-// tests/spike/dummyjson-spike.js
-import http from 'k6/http';
-import { check, sleep } from 'k6';
-import { 
+import {
   getProductsEndpoint,
   getProductByIdEndpoint,
   searchProductsEndpoint,
   getProductsByCategoryEndpoint
-} from '../../utils/config/endpoints.js'; 
+} from 'utils/config/endpoints.js';
 
-// Load traffic patterns from file
-const trafficData = JSON.parse(open('../../test-data/trafficPatterns.json'));
+const trafficData = JSON.parse(open('test-data/trafficPatterns.json'));
+
 
 export const options = {
   // Use spike stages from file
