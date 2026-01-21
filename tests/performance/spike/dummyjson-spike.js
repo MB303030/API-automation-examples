@@ -1,53 +1,82 @@
 import http from 'k6/http';
 import { check, sleep } from 'k6';
+import { 
+  getProductsEndpoint,
+  getProductByIdEndpoint,
+  searchProductsEndpoint,
+  getProductsByCategoryEndpoint
+} from '../../../utils/config/endpoints.js';
 
-/**
- * SPIKE TEST - DummyJSON API
- * Purpose: Test how API handles sudden traffic bursts
- * Simulates: Flash sale, viral content, breaking news
- */
+// Load traffic patterns from file
+const trafficData = JSON.parse(open('../../test-data/trafficPatterns.json'));
+
 export const options = {
-  // SPIKE pattern: Sudden burst then recovery
-  stages: [
-    { duration: '30s', target: 10 },    // Normal: 10 users
-    { duration: '1m', target: 200 },    // SPIKE: 10→200 users suddenly!
-    { duration: '30s', target: 200 },   // Hold spike
-    { duration: '1m', target: 50 },     // Recovery: 200→50 users
-    { duration: '30s', target: 10 },    // Back to normal
-  ],
+  // Use spike stages from file
+  stages: trafficData.patterns.spike_test.stages,
   
-  // Spike test thresholds (tolerant of temporary degradation)
-  thresholds: {
-    http_req_duration: ['p(95)<1000'],  // Allow 1s during spike
-    http_req_failed: ['rate<0.05'],     // Allow 5% failures during spike
-    http_reqs: ['rate>200'],            // Expect high throughput
-  },
+  // Use spike thresholds from file
+  thresholds: trafficData.thresholds.spike,
 };
 
 export default function () {
-  // During spike, users might refresh repeatedly
-  const requestsPerUser = Math.random() < 0.3 ? 3 : 1; // 30% refresh multiple times
+  // SPIKE BEHAVIOR: Flash sale or viral content scenario
   
-  for (let i = 0; i < requestsPerUser; i++) {
-    // Spike scenario: Everyone tries to get limited products
-    const limit = 5;
-    const skip = Math.floor(Math.random() * 10); // First 10 pages
+  // During spikes, many users REFRESH the same page
+  const refreshCount = Math.random() < 0.6 ? Math.floor(Math.random() * 3) + 1 : 1;
+  
+  for (let i = 0; i < refreshCount; i++) {
+    // SCENARIO 1: Browse first page (90% during spike)
+    if (Math.random() < 0.9) {
+      // Small page size for faster loading during spike
+      const limit = Math.floor(Math.random() * 5) + 1; // 1-5 products
+      const products = http.get(getProductsEndpoint(limit, 0));
+      
+      check(products, {
+        'page loaded during spike': (r) => r.status === 200,
+        'fast spike response': (r) => r.timings.duration < 1500,
+      });
+    }
     
-    const response = http.get(`https://dummyjson.com/products?limit=${limit}&skip=${skip}`, {
-      tags: { test: 'spike', request_type: 'product_listing' },
-    });
+    // SCENARIO 2: View popular product (70% during spike)
+    if (Math.random() < 0.7) {
+      // Only top 5 popular products during spike
+      const popularIds = [1, 2, 3, 4, 5];
+      const productId = popularIds[Math.floor(Math.random() * popularIds.length)];
+      const product = http.get(getProductByIdEndpoint(productId));
+      
+      check(product, {
+        'popular product loaded': (r) => r.status === 200,
+      });
+    }
     
-    check(response, {
-      'status is 200': (r) => r.status === 200,
-      'response time < 2s': (r) => r.timings.duration < 2000,
-    });
+    // SCENARIO 3: Search for trending items (50% during spike)
+    if (Math.random() < 0.5) {
+      const trendingTerms = ['phone', 'sale', 'discount', 'laptop'];
+      const term = trendingTerms[Math.floor(Math.random() * trendingTerms.length)];
+      const search = http.get(searchProductsEndpoint(term));
+      
+      check(search, {
+        'search successful during spike': (r) => r.status === 200,
+      });
+    }
     
-    // Very short think time during spike (users are frantic!)
-    if (i < requestsPerUser - 1) {
-      sleep(Math.random() * 0.5); // 0-0.5 seconds between rapid requests
+    // SCENARIO 4: Browse by category (30% during spike)
+    if (Math.random() < 0.3) {
+      const popularCategories = ['smartphones', 'laptops', 'fragrances'];
+      const category = popularCategories[Math.floor(Math.random() * popularCategories.length)];
+      const categoryProducts = http.get(getProductsByCategoryEndpoint(category));
+      
+      check(categoryProducts, {
+        'category browse worked': (r) => r.status === 200,
+      });
+    }
+    
+    // VERY short pause between rapid actions during spike
+    if (i < refreshCount - 1) {
+      sleep(Math.random() * 0.2); // 0-0.2 seconds
     }
   }
   
-  // Normal think time after burst
-  sleep(Math.random() * 1 + 0.5); // 0.5-1.5 seconds
+  // Final short think time after spike activity
+  sleep(Math.random() * 0.5 + 0.1); // 0.1-0.6 seconds
 }
