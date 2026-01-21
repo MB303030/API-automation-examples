@@ -1,9 +1,10 @@
-name: Paths Debug K6 
+# .github/workflows/k6-no-deps.yml
+name: K6 Tests (No Dependencies)
 
-on: [workflow_dispatch]
+on: [push, workflow_dispatch]
 
 jobs:
-  debug:
+  k6-tests:
     runs-on: ubuntu-latest
     
     steps:
@@ -12,50 +13,11 @@ jobs:
     - name: Setup k6
       uses: grafana/setup-k6-action@v1
     
-    - name: Create and run debug test
-      run: |
-        # Create debug test file
-        cat > debug-paths.js << 'EOF'
-        console.log('=== DEBUG START ===');
-        
-        // Try ALL possible paths
-        const paths = [
-          // From root
-          'test-data/trafficPatterns.json',
-          './test-data/trafficPatterns.json',
-          
-          // Absolute GitHub paths
-          '/github/workspace/test-data/trafficPatterns.json',
-          '/home/runner/work/API-automation-examples/API-automation-examples/test-data/trafficPatterns.json',
-          
-          // Relative from different depths
-          '../test-data/trafficPatterns.json',
-          '../../test-data/trafficPatterns.json',
-          '../../../test-data/trafficPatterns.json',
-        ];
-        
-        console.log('Current dir (from process.cwd()):', typeof process !== 'undefined' ? process.cwd() : 'process not available');
-        console.log('Environment PWD:', __ENV.PWD || 'Not set');
-        
-        for (const path of paths) {
-          try {
-            console.log(`\nTrying: ${path}`);
-            const content = open(path);
-            const data = JSON.parse(content);
-            console.log(`✅ SUCCESS! File exists at: ${path}`);
-            console.log(`   First key: ${Object.keys(data)[0]}`);
-            console.log(`   File size: ${content.length} chars`);
-            break;
-          } catch (e) {
-            console.log(`❌ Failed: ${e.message}`);
-          }
-        }
-        
-        console.log('\n=== DEBUG END ===');
-        
-        export default function() {}
-        EOF
-        
-        # Run the debug test
-        echo "Running debug test..."
-        k6 run debug-paths.js
+    - name: Run Smoke Test
+      run: k6 run tests/smoke/dummyjson-smoke-nodeps.js
+    
+    - name: Run Load Test
+      run: k6 run tests/load/dummyjson-load-nodeps.js
+    
+    - name: Run Spike Test
+      run: k6 run tests/spike/dummyjson-spike-nodeps.js
