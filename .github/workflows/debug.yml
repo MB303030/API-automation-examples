@@ -1,19 +1,22 @@
-# .github/workflows/test-spike-only.yml
-name: Test Spike Test Only
+# .github/workflows/k6-spike.yml
+name: k6 spike test
 
-on: [workflow_dispatch]
+on:
+  push:
+    branches: [ main ]
+  workflow_dispatch:
 
 jobs:
-  test-spike:
+  k6:
     runs-on: ubuntu-latest
-    
+
     steps:
-    - uses: actions/checkout@v4
-    
-    - name: Setup k6
-      uses: grafana/setup-k6-action@v1
-    
-    - name: Run spike test
-      run: |
-        echo "=== Running spike test: tests/spike/dummyjson-spike.js ==="
-        k6 run tests/spike/dummyjson-spike.js
+      - name: Checkout repo
+        uses: actions/checkout@v4
+
+      - name: Install k6
+        uses: grafana/setup-k6-action@v1
+
+      - name: Run k6 spike test
+        run: |
+          k6 run tests/spike/dummyjson-spike.js
