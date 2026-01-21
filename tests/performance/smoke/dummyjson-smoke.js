@@ -18,22 +18,25 @@ export const options = {
 };
 
 export default function () {
-  // SPIKE BEHAVIOR: Users are frantic during flash sales!
+  // SPIKE PATTERN: During flash sales, users mostly check POPULAR items
   
-  // 80% chance: Get products page (higher than normal)
+  // 80% chance: Get FIRST PAGE of products (not random page!)
   if (Math.random() < 0.8) {
+    // During spikes, users go to first page (skip=0), not random pages
     const limit = Math.floor(Math.random() * 5) + 1; // 1-5 products
-    const skip = Math.floor(Math.random() * 20);     // First 20 pages
-    const products = http.get(`https://dummyjson.com/products?limit=${limit}&skip=${skip}`);
+    const products = http.get(`https://dummyjson.com/products?limit=${limit}&skip=0`); // ALWAYS page 1
     
     check(products, {
       'products status 200': (r) => r.status === 200,
     });
   }
   
-  // 40% chance: View specific product (higher than normal)
+  // 40% chance: View SPECIFIC popular product (not random!)
   if (Math.random() < 0.4) {
-    const productId = Math.floor(Math.random() * 20) + 1; // First 20 products
+    // During spikes, users check TOP 10 products, not random 1-100
+    const popularProducts = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10]; // Top 10 products
+    const productId = popularProducts[Math.floor(Math.random() * popularProducts.length)];
+    
     const singleProduct = http.get(`https://dummyjson.com/products/${productId}`);
     
     check(singleProduct, {
@@ -41,10 +44,11 @@ export default function () {
     });
   }
   
-  // 30% chance: Search for products (higher than normal)
+  // 30% chance: Search for POPULAR terms (not random!)
   if (Math.random() < 0.3) {
-    const searchTerms = ['phone', 'laptop', 'sale', 'discount'];
-    const randomTerm = searchTerms[Math.floor(Math.random() * searchTerms.length)];
+    const popularSearchTerms = ['phone', 'laptop', 'sale']; // Only popular terms during spike
+    const randomTerm = popularSearchTerms[Math.floor(Math.random() * popularSearchTerms.length)];
+    
     const search = http.get(`https://dummyjson.com/products/search?q=${randomTerm}`);
     
     check(search, {
