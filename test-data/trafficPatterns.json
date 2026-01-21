@@ -1,0 +1,83 @@
+{
+  "patterns": {
+    "smoke_test": {
+      "description": "Quick sanity check - minimal load",
+      "stages": [
+        {"duration": "30s", "target": 5},
+        {"duration": "1m", "target": 10},
+        {"duration": "30s", "target": 0}
+      ]
+    },
+    
+    "load_test_normal": {
+      "description": "Normal business day simulation",
+      "stages": [
+        {"duration": "2m", "target": 20},
+        {"duration": "3m", "target": 50},
+        {"duration": "5m", "target": 100},
+        {"duration": "3m", "target": 50},
+        {"duration": "2m", "target": 20}
+      ]
+    },
+    
+    "load_test_extended": {
+      "description": "Extended load test (1 hour)",
+      "stages": [
+        {"duration": "10m", "target": 50},
+        {"duration": "20m", "target": 100},
+        {"duration": "20m", "target": 150},
+        {"duration": "10m", "target": 50}
+      ]
+    },
+    
+    "stress_test": {
+      "description": "Push beyond normal limits",
+      "stages": [
+        {"duration": "2m", "target": 50},
+        {"duration": "3m", "target": 100},
+        {"duration": "5m", "target": 200},
+        {"duration": "5m", "target": 300},
+        {"duration": "2m", "target": 100}
+      ]
+    },
+    
+    "spike_test": {
+      "description": "Sudden traffic burst",
+      "stages": [
+        {"duration": "30s", "target": 10},
+        {"duration": "30s", "target": 200},
+        {"duration": "1m", "target": 200},
+        {"duration": "30s", "target": 50},
+        {"duration": "30s", "target": 10}
+      ]
+    },
+    
+    "soak_test": {
+      "description": "Long duration test (8 hours)",
+      "stages": [
+        {"duration": "30m", "target": 50},
+        {"duration": "7h", "target": 100},
+        {"duration": "30m", "target": 50}
+      ]
+    }
+  },
+  
+  "thresholds": {
+    "smoke": {
+      "http_req_duration": ["p(95)<500"],
+      "http_req_failed": ["rate<0.01"]
+    },
+    "load": {
+      "http_req_duration": ["p(95)<300"],
+      "http_req_failed": ["rate<0.005"]
+    },
+    "stress": {
+      "http_req_duration": ["p(95)<800"],
+      "http_req_failed": ["rate<0.05"]
+    },
+    "spike": {
+      "http_req_duration": ["p(95)<1000"],
+      "http_req_failed": ["rate<0.1"]
+    }
+  }
+}
