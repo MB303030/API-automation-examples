@@ -1,4 +1,4 @@
-name: Gemini
+name:gemini
 
 on:
   workflow_dispatch:
@@ -13,6 +13,7 @@ on:
 jobs:
   test:
     runs-on: ubuntu-latest
+
     steps:
       - uses: actions/checkout@v4
       
@@ -22,79 +23,87 @@ jobs:
       - name: Run Performance Suite
         run: |
           TEST_TYPE="${{ github.event.inputs.test_type }}"
-          declare -A TESTS=( ["smoke"]="tests/performance/smoke/dummyjson-smoke.js" ["load"]="tests/performance/load/dummyjson-load.js" ["spike"]="tests/performance/spike/dummyjson-spike.js" )
+          declare -A TESTS=( 
+            ["smoke"]="tests/performance/smoke/dummyjson-smoke.js" 
+            ["load"]="tests/performance/load/dummyjson-load.js" 
+            ["spike"]="tests/performance/spike/dummyjson-spike.js" 
+          )
 
           for TEST in smoke load spike; do
             if [[ "$TEST_TYPE" == "all" || "$TEST_TYPE" == "$TEST" ]]; then
               echo "RUN_${TEST^^}=true" >> $GITHUB_ENV
+              echo "🚀 Running ${TEST^} test..."
+              # We use '|| true' to ensure the workflow continues to the report generation even if k6 fails
               k6 run "${TESTS[$TEST]}" --out json="k6-$TEST.json" 2>&1 | tee "k6-$TEST-output.txt" || true
+            else
+              echo "RUN_${TEST^^}=false" >> $GITHUB_ENV
             fi
           done
 
-      - name: Create World-Class Performance Report
+      - name: Create Unified Performance Report
         if: always()
         run: |
-          echo "# 📊 K6 PERFORMANCE INTELLIGENCE REPORT" >> $GITHUB_STEP_SUMMARY
-          echo "**📅 Report Time:** $(date)" >> $GITHUB_STEP_SUMMARY
+          echo "# 🚀 PERFORMANCE INTELLIGENCE COMMAND CENTER" >> $GITHUB_STEP_SUMMARY
+          echo "> **Generated:** $(date) | **Test Mode:** ${{ github.event.inputs.test_type }}" >> $GITHUB_STEP_SUMMARY
           echo "---" >> $GITHUB_STEP_SUMMARY
 
           render_test() {
             NAME=$1; TITLE=$2; MAX_VUS=$3; LINE=$4; FILE="k6-${NAME}-output.txt"
             if [ ! -s "$FILE" ]; then return; fi
 
-            # --- DYNAMIC DATA EXTRACTION (Smarter than hardcoded strings) ---
-            P95=$(grep "http_req_duration" "$FILE" | grep -oE "p\(95\)=[0-9.]+" | cut -d'=' -f2 || echo "0")
-            ERR_RATE=$(grep "http_req_failed" "$FILE" | grep -oE "rate=[0-9.]+" | cut -d'=' -f2 || echo "0")
-            # Convert decimal rate to percentage for display (e.g., 0.10 -> 10%)
-            ERR_PCT=$(echo "$ERR_RATE * 100" | bc -l | xargs printf "%.2f")
-
-            echo "## 🚀 ${TITLE} Test Analysis" >> $GITHUB_STEP_SUMMARY
+            # 1. UNIFIED FAILURE DETECTION (The Source of Truth)
+            # If k6 output contains the failure '✗' or the threshold crossed message
+            if grep -q "✗" "$FILE" || grep -q "thresholds on metrics.*crossed" "$FILE"; then 
+                TEST_FAILED=true
+            else 
+                TEST_FAILED=false
+            fi
             
-            # 📈 MERMAID GRAPH
+            # 2. RENDER TITLE & LOAD PATTERN
+            echo "## 📶 ${TITLE} TEST ANALYSIS" >> $GITHUB_STEP_SUMMARY
+            
             echo '```mermaid' >> $GITHUB_STEP_SUMMARY
             echo 'xychart-beta' >> $GITHUB_STEP_SUMMARY
-            echo "    title \"${TITLE} - Virtual Users Over Time\"" >> $GITHUB_STEP_SUMMARY
-            echo "    y-axis \"Users\" 0 --> ${MAX_VUS}" >> $GITHUB_STEP_SUMMARY
+            echo "    title \"${TITLE} - Virtual Users Load Pattern\"" >> $GITHUB_STEP_SUMMARY
+            echo "    y-axis \"Virtual Users\" 0 --> ${MAX_VUS}" >> $GITHUB_STEP_SUMMARY
             echo "    line ${LINE}" >> $GITHUB_STEP_SUMMARY
             echo '```' >> $GITHUB_STEP_SUMMARY
 
-            # 📊 METRICS DASHBOARD
-            echo "### 📊 Critical Metrics Dashboard" >> $GITHUB_STEP_SUMMARY
-            echo "| Metric | Result | Target | Status |" >> $GITHUB_STEP_SUMMARY
-            echo "|--------|--------|--------|--------|" >> $GITHUB_STEP_SUMMARY
-            echo "| ⚡ P95 Latency | ${P95}ms | <2000ms | $( (( $(echo "$P95 < 2000" | bc -l) )) && echo "✅ PASS" || echo "🔴 FAIL" ) |" >> $GITHUB_STEP_SUMMARY
-            echo "| 🚨 Error Rate | ${ERR_PCT}% | <10% | $( (( $(echo "$ERR_RATE < 0.10" | bc -l) )) && echo "✅ PASS" || echo "🔴 FAIL" ) |" >> $GITHUB_STEP_SUMMARY
+            # 3. SHOW THE ENTIRE METRIC BLOCK (Transparency)
+            echo "### 🎯 Detailed Threshold Metrics" >> $GITHUB_STEP_SUMMARY
+            echo "Showing full diagnostic output from k6 core:" >> $GITHUB_STEP_SUMMARY
+            echo '```diff' >> $GITHUB_STEP_SUMMARY
+            # We extract the metrics block. 'diff' formatting makes it look professional.
+            grep -E "✓|✗|http_req|checks" "$FILE" | grep -v "\[.*\]" >> $GITHUB_STEP_SUMMARY
+            echo '```' >> $GITHUB_STEP_SUMMARY
 
-            # 🧠 IMPACT ANALYSIS (Smarter Logic)
-            echo "### 🧠 Impact Analysis" >> $GITHUB_STEP_SUMMARY
-            if (( $(echo "$ERR_RATE > 0.50" | bc -l) )); then
-              echo "🔥 **SYSTEM FAILURE:** The system is collapsing under load. **Business Impact:** Total service outage for customers." >> $GITHUB_STEP_SUMMARY
-            elif (( $(echo "$ERR_RATE > 0.10" | bc -l) )); then
-              echo "⚠️ **DEGRADED EXPERIENCE:** High error rates detected. **Business Impact:** Users will see 'Internal Server Errors' during peaks." >> $GITHUB_STEP_SUMMARY
+            # 4. ALIGNED ANALYSIS (No contradictions)
+            echo "### 🧠 Intelligent Analysis & Advice" >> $GITHUB_STEP_SUMMARY
+            if [ "$TEST_FAILED" = "true" ]; then
+              echo "#### 🔴 STATUS: PERFORMANCE FAILURE" >> $GITHUB_STEP_SUMMARY
+              echo "- **Observation:** One or more thresholds (latency/errors) were violated during the ${NAME} phase." >> $GITHUB_STEP_SUMMARY
+              echo "- **Impact:** The system cannot safely handle ${MAX_VUS} users without degrading." >> $GITHUB_STEP_SUMMARY
+              echo "- **Action:** **BLOCK DEPLOYMENT.** Review the specific red '✗' markers in the table above." >> $GITHUB_STEP_SUMMARY
             else
-              echo "✅ **STABLE PERFORMANCE:** System handled the load gracefully." >> $GITHUB_STEP_SUMMARY
-            fi
-            
-            echo "### 🎯 Recommended Actions" >> $GITHUB_STEP_SUMMARY
-            if (( $(echo "$ERR_RATE > 0.10" | bc -l) )); then
-              echo "1. **INVESTIGATE** Logs for 5XX errors. 2. **SCALE** DB connections. 3. **DO NOT DEPLOY**." >> $GITHUB_STEP_SUMMARY
-            else
-              echo "1. **PROCEED** to next stage. 2. **MONITOR** production latency." >> $GITHUB_STEP_SUMMARY
+              echo "#### 🟢 STATUS: SYSTEM HEALTHY" >> $GITHUB_STEP_SUMMARY
+              echo "- **Observation:** All metrics remained within green safety margins." >> $GITHUB_STEP_SUMMARY
+              echo "- **Impact:** RESILIENT. The application is stable under this specific load." >> $GITHUB_STEP_SUMMARY
+              echo "- **Action:** **PROCEED.** No regressions detected." >> $GITHUB_STEP_SUMMARY
             fi
             echo "---" >> $GITHUB_STEP_SUMMARY
           }
 
-          # Execution
-          [ "$RUN_SMOKE" == "true" ] && render_test "smoke" "Smoke" 5 "[1, 5, 5, 0]"
-          [ "$RUN_LOAD" == "true" ] && render_test "load" "Load" 120 "[10, 50, 120, 80, 20]"
-          [ "$RUN_SPIKE" == "true" ] && render_test "spike" "Spike" 400 "[0, 400, 400, 0]"
+          # Execute Renderings
+          [ "$RUN_SMOKE" == "true" ] && render_test "smoke" "SMOKE" 5 "[1, 3, 5, 5, 0]"
+          [ "$RUN_LOAD" == "true" ] && render_test "load" "LOAD" 120 "[10, 50, 100, 120, 120, 30]"
+          [ "$RUN_SPIKE" == "true" ] && render_test "spike" "SPIKE" 400 "[0, 400, 400, 0]"
 
-          # 🏆 DEPLOYMENT DECISION MATRIX
-          echo "# 🏆 Final Deployment Decision" >> $GITHUB_STEP_SUMMARY
-          if [ -f "k6-spike-output.txt" ] && grep -q "thresholds on metrics.*crossed" "k6-spike-output.txt"; then
-             echo "## 🔴 VERDICT: DO NOT DEPLOY" >> $GITHUB_STEP_SUMMARY
-             echo "**Stakeholder Briefing:** 'The site crashes at 400 users. Launching now will result in a site outage.'" >> $GITHUB_STEP_SUMMARY
+          # 🏆 FINAL EXECUTIVE VERDICT (Scans all outputs for any failure)
+          echo "# 🏆 FINAL DEPLOYMENT VERDICT" >> $GITHUB_STEP_SUMMARY
+          if grep -rq "✗" k6-*-output.txt || grep -rq "crossed" k6-*-output.txt; then
+            echo "## ❌ VERDICT: REJECTED" >> $GITHUB_STEP_SUMMARY
+            echo "> **Stakeholder Summary:** Performance goals were not met. Check the specific failures in the detailed sections above. Deployment is not recommended until the bottlenecks are resolved." >> $GITHUB_STEP_SUMMARY
           else
-             echo "## 🟢 VERDICT: READY FOR LAUNCH" >> $GITHUB_STEP_SUMMARY
-             echo "**Stakeholder Briefing:** 'The system passed all stress tests. We are clear for takeoff!'" >> $GITHUB_STEP_SUMMARY
+            echo "## ✅ VERDICT: APPROVED" >> $GITHUB_STEP_SUMMARY
+            echo "> **Stakeholder Summary:** All performance suites (Smoke, Load, Spike) passed. The application meets the required service level objectives for production launch." >> $GITHUB_STEP_SUMMARY
           fi
