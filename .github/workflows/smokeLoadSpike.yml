@@ -114,13 +114,45 @@ jobs:
             echo "" >> $GITHUB_STEP_SUMMARY
 
             # -------- TEST STATUS --------
-            if tail -5 "$OUTPUT_FILE" | grep -q "thresholds on metrics.*have been crossed"; then
-              echo "⚠️ **Status: THRESHOLD VIOLATIONS DETECTED**" >> $GITHUB_STEP_SUMMARY
-            elif tail -5 "$OUTPUT_FILE" | grep -q "execution: local"; then
-              echo "✅ **Status: COMPLETED SUCCESSFULLY**" >> $GITHUB_STEP_SUMMARY
-            else
-              echo "❓ **Status: UNKNOWN**" >> $GITHUB_STEP_SUMMARY
+            # FIXED: Better status detection for all test types
+            STATUS="COMPLETED"  # Default to completed
+            
+            # Check for threshold violations
+            if grep -q "thresholds on metrics.*have been crossed" "$OUTPUT_FILE"; then
+              STATUS="THRESHOLD_VIOLATIONS"
             fi
+            
+            # Check for errors (case insensitive)
+            if grep -qi "ERRO\|ERROR\|Error:" "$OUTPUT_FILE"; then
+              # Don't override if it's just threshold warnings
+              if ! grep -q "thresholds on metrics.*have been crossed" "$OUTPUT_FILE"; then
+                STATUS="ERROR"
+              fi
+            fi
+            
+            # Check if test actually ran (has metrics output)
+            if ! grep -q "iterations.*:" "$OUTPUT_FILE" && ! grep -q "http_reqs.*:" "$OUTPUT_FILE"; then
+              STATUS="FAILED_NO_OUTPUT"
+            fi
+            
+            # Display status
+            case "$STATUS" in
+              "COMPLETED")
+                echo "✅ **Status: COMPLETED SUCCESSFULLY**" >> $GITHUB_STEP_SUMMARY
+                ;;
+              "THRESHOLD_VIOLATIONS")
+                echo "⚠️ **Status: COMPLETED WITH THRESHOLD VIOLATIONS**" >> $GITHUB_STEP_SUMMARY
+                ;;
+              "ERROR")
+                echo "❌ **Status: FAILED WITH ERRORS**" >> $GITHUB_STEP_SUMMARY
+                ;;
+              "FAILED_NO_OUTPUT")
+                echo "❌ **Status: FAILED - NO METRICS GENERATED**" >> $GITHUB_STEP_SUMMARY
+                ;;
+              *)
+                echo "✅ **Status: COMPLETED**" >> $GITHUB_STEP_SUMMARY
+                ;;
+            esac
             echo "" >> $GITHUB_STEP_SUMMARY
 
             # -------- GRAPH --------
