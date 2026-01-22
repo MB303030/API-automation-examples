@@ -1,4 +1,4 @@
-name: DeepSeak version
+name: ALL performance tests
 
 on:
   workflow_dispatch:
