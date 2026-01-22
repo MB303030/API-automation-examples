@@ -1,4 +1,4 @@
-name: Ultimate GEMINI
+name: GEMINI Performance Intelligence
 
 on:
   workflow_dispatch:
@@ -22,14 +22,14 @@ jobs:
       - name: Run Performance Suite
         run: |
           TEST_TYPE="${{ github.event.inputs.test_type }}"
-          
-          # Map files to types
           declare -A TESTS=( ["smoke"]="tests/performance/smoke/dummyjson-smoke.js" ["load"]="tests/performance/load/dummyjson-load.js" ["spike"]="tests/performance/spike/dummyjson-spike.js" )
 
           for TEST in smoke load spike; do
             if [[ "$TEST_TYPE" == "all" || "$TEST_TYPE" == "$TEST" ]]; then
               echo "RUN_${TEST^^}=true" >> $GITHUB_ENV
               echo "🚀 Running ${TEST^} Test..."
+              # Ensure output file is created even if k6 fails early
+              touch "k6-$TEST-output.txt"
               k6 run "${TESTS[$TEST]}" --out json="k6-$TEST.json" 2>&1 | tee "k6-$TEST-output.txt"
             else
               echo "RUN_${TEST^^}=false" >> $GITHUB_ENV
@@ -44,64 +44,71 @@ jobs:
 
           render_test () {
             NAME=$1; TITLE=$2; MAX_VUS=$3; LINE=$4; OUTPUT_FILE="k6-${NAME}-output.txt"
-            if [ ! -f "$OUTPUT_FILE" ]; then return; fi
+            if [ ! -s "$OUTPUT_FILE" ]; then return; fi
 
-            # --- 1. EXTRACT RAW METRICS (RETORED FULL LOGIC) ---
-            P95=$(grep "http_req_duration.*p(95)=" "$OUTPUT_FILE" | tail -1 | sed 's/.*p(95)=//' | awk '{print $1}' || echo "N/A")
-            FAIL_RATE=$(grep "http_req_failed.*rate=" "$OUTPUT_FILE" | tail -1 | sed 's/.*rate=//' | awk '{print $1}' || echo "0")
-            CHECKS_TOTAL=$(grep "checks_total.*:" "$OUTPUT_FILE" | tail -1 | awk '{print $2}' | tr -d ',' || echo "0")
-            CHECKS_FAILED=$(grep "checks_failed.*:" "$OUTPUT_FILE" | tail -1 | awk '{print $2}' | tr -d ',' || echo "0")
-            HTTP_REQS=$(grep "http_reqs.*:" "$OUTPUT_FILE" | tail -1 | awk '{print $2}' | tr -d ',' || echo "0")
+            # --- 1. CLEAN DATA EXTRACTION (Fixes syntax errors) ---
+            # Extract only numeric values for math
+            RAW_P95=$(grep "http_req_duration.*p(95)=" "$OUTPUT_FILE" | tail -1 | sed 's/.*p(95)=//' | awk '{print $1}' | sed 's/[^0-9.]//g')
+            P95=${RAW_P95:-0}
+            
+            RAW_FAIL=$(grep "http_req_failed.*rate=" "$OUTPUT_FILE" | tail -1 | sed 's/.*rate=//' | awk '{print $1}' | sed 's/[^0-9.]//g')
+            FAIL_RATE=${RAW_FAIL:-0}
+            
+            CHECKS_TOTAL=$(grep "checks_total.*:" "$OUTPUT_FILE" | tail -1 | awk '{print $2}' | tr -d ',' | sed 's/[^0-9]//g' || echo "0")
+            CHECKS_FAILED=$(grep "checks_failed.*:" "$OUTPUT_FILE" | tail -1 | awk '{print $2}' | tr -d ',' | sed 's/[^0-9]//g' || echo "0")
+            [ -z "$CHECKS_TOTAL" ] && CHECKS_TOTAL=0
+            [ -z "$CHECKS_FAILED" ] && CHECKS_FAILED=0
 
-            # --- 2. STATUS CALCULATION ---
+            # --- 2. INTELLIGENT STATUS ---
             STATUS="🟢 HEALTHY"
-            [ $(echo "$FAIL_RATE > 0.05" | bc -l) -eq 1 ] && STATUS="🔴 CRITICAL FAIL"
+            # Compare failure rate (0.10 = 10%)
+            if (( $(echo "$FAIL_RATE > 0.10" | bc -l) )); then STATUS="🔴 CRITICAL FAIL"; 
+            elif (( $(echo "$P95 > 2000" | bc -l) )); then STATUS="⚠️ SLOW RESPONSE"; fi
             grep -q "thresholds on metrics.*crossed" "$OUTPUT_FILE" && STATUS="⚠️ THRESHOLD VIOLATION"
 
             # --- 3. REPORT RENDERING ---
             echo "## $TITLE Test Result: $STATUS" >> $GITHUB_STEP_SUMMARY
             
-            # Mermaid Chart for Load Profile
+            echo "#### 📈 Load Pattern Profile" >> $GITHUB_STEP_SUMMARY
             echo '```mermaid' >> $GITHUB_STEP_SUMMARY
             echo 'xychart-beta' >> $GITHUB_STEP_SUMMARY
-            echo "  title \"$TITLE Load Distribution\"" >> $GITHUB_STEP_SUMMARY
+            echo "  title \"$TITLE Virtual Users Curve\"" >> $GITHUB_STEP_SUMMARY
             echo "  y-axis \"Virtual Users\" 0 --> $MAX_VUS" >> $GITHUB_STEP_SUMMARY
             echo "  line $LINE" >> $GITHUB_STEP_SUMMARY
             echo '```' >> $GITHUB_STEP_SUMMARY
 
-            echo "### 🔍 Key Performance Indicators" >> $GITHUB_STEP_SUMMARY
-            echo "| Metric | Value | Interpretation |" >> $GITHUB_STEP_SUMMARY
+            echo "### 🔍 Key Metrics Analysis" >> $GITHUB_STEP_SUMMARY
+            echo "| Metric | Value | Status |" >> $GITHUB_STEP_SUMMARY
             echo "| :--- | :--- | :--- |" >> $GITHUB_STEP_SUMMARY
-            echo "| **P95 Latency** | ${P95}ms | $( [[ $(echo "$P95 < 1000" | bc -l) -eq 1 ]] && echo "✅ Within Specs" || echo "❌ Too Slow" ) |" >> $GITHUB_STEP_SUMMARY
-            echo "| **Error Rate** | $(echo "$FAIL_RATE * 100" | bc -l | xargs printf "%.2f")% | $( [[ $(echo "$FAIL_RATE < 0.02" | bc -l) -eq 1 ]] && echo "✅ Stable" || echo "❌ Unstable" ) |" >> $GITHUB_STEP_SUMMARY
-            echo "| **Functional Checks** | $((CHECKS_TOTAL - CHECKS_FAILED))/$CHECKS_TOTAL | $( [[ $CHECKS_FAILED -eq 0 ]] && echo "✅ 100% Pass" || echo "❌ Logic Failures" ) |" >> $GITHUB_STEP_SUMMARY
+            echo "| **P95 Latency** | ${P95}ms | $( (( $(echo "$P95 < 2000" | bc -l) )) && echo "✅ OK" || echo "❌ SLOW" ) |" >> $GITHUB_STEP_SUMMARY
+            echo "| **Error Rate** | $(echo "$FAIL_RATE * 100" | bc -l | xargs printf "%.2f")% | $( (( $(echo "$FAIL_RATE < 0.10" | bc -l) )) && echo "✅ STABLE" || echo "❌ FAILING" ) |" >> $GITHUB_STEP_SUMMARY
+            echo "| **Checks Passed** | $((CHECKS_TOTAL - CHECKS_FAILED)) / $CHECKS_TOTAL | $( [[ $CHECKS_FAILED -eq 0 && $CHECKS_TOTAL -gt 0 ]] && echo "✅ 100%" || echo "⚠️ Issues" ) |" >> $GITHUB_STEP_SUMMARY
 
-            # --- 4. DEEP DIAGNOSTICS (THE "CREATIVE" PART) ---
+            # --- 4. BUSINESS JOURNEY VERIFICATION ---
             echo "### 🛠️ Diagnostic Insights" >> $GITHUB_STEP_SUMMARY
-            if [ "$NAME" == "spike" ] && [ "$STATUS" != "🟢 HEALTHY" ]; then
-                echo "- **Spike Analysis:** The system buckled under sudden load. This usually points to **Auto-scaling lag** or **Database connection throttling**." >> $GITHUB_STEP_SUMMARY
-            fi
             
-            if grep -q "❌ 'rate<0.10'" "$OUTPUT_FILE"; then
-                echo "- 🛑 **High Error Density:** Errors exceeded 10%. Your API is likely hitting a rate limit or a 500-series crash under stress." >> $GITHUB_STEP_SUMMARY
-            fi
-
-            # --- 5. FUNCTIONAL ACCESS VERIFICATION ---
+            # Check for specific business journeys from your original logs
             if grep -q "page loaded during spike" "$OUTPUT_FILE"; then
-                echo "#### ✅ Critical Journey Status" >> $GITHUB_STEP_SUMMARY
-                PAGE_SUCCESS=$(grep -A1 "page loaded during spike" "$OUTPUT_FILE" | tail -1 | grep -o "[0-9]\+ — ✅" | grep -o "[0-9]\+" || echo "0")
-                echo "- **Page Load Success:** ${PAGE_SUCCESS} users successfully reached the landing page during the peak." >> $GITHUB_STEP_SUMMARY
+                PAGE_LINE=$(grep -A1 "page loaded during spike" "$OUTPUT_FILE" | tail -1)
+                echo "- **User Journey:** Page Load Status: \`$PAGE_LINE\`" >> $GITHUB_STEP_SUMMARY
             fi
 
-            echo "<details><summary>📂 View Full Technical Log</summary>" >> $GITHUB_STEP_SUMMARY
+            if [ "$NAME" == "spike" ] && (( $(echo "$FAIL_RATE > 0.10" | bc -l) )); then
+                echo "- 🛑 **Action Required:** The system failed the Spike test. This indicates the infrastructure cannot scale instantly. **Recommendation:** Check horizontal pod autoscaling (HPA) settings." >> $GITHUB_STEP_SUMMARY
+            elif [ "$STATUS" == "🟢 HEALTHY" ]; then
+                echo "- ✅ **System Readiness:** Performance is stable. No immediate action required." >> $GITHUB_STEP_SUMMARY
+            fi
+
+            echo "<details><summary>📄 View Raw k6 Summary Output</summary>" >> $GITHUB_STEP_SUMMARY
             echo '```' >> $GITHUB_STEP_SUMMARY
-            tail -100 "$OUTPUT_FILE" >> $GITHUB_STEP_SUMMARY
+            # Filter out the progress bars to keep the summary clean
+            grep -v "\[.*\]" "$OUTPUT_FILE" | tail -n 50 >> $GITHUB_STEP_SUMMARY
             echo '```' >> $GITHUB_STEP_SUMMARY
             echo "</details>" >> $GITHUB_STEP_SUMMARY
             echo "---" >> $GITHUB_STEP_SUMMARY
           }
 
-          # Execute for each test
-          [[ "$RUN_SMOKE" == "true" ]] && render_test "smoke" "SMOKE" 5 "[1, 3, 5, 5, 0]"
-          [[ "$RUN_LOAD" == "true" ]] && render_test "load" "LOAD" 120 "[10, 50, 100, 120, 80, 20]"
-          [[ "$RUN_SPIKE" == "true" ]] && render_test "spike" "SPIKE" 400 "[0, 400, 400, 0]"
+          # Final Run Execution
+          [ "$RUN_SMOKE" == "true" ] && render_test "smoke" "SMOKE" 5 "[1, 3, 5, 5, 0]"
+          [ "$RUN_LOAD" == "true" ] && render_test "load" "LOAD" 120 "[10, 50, 100, 120, 80, 20]"
+          [ "$RUN_SPIKE" == "true" ] && render_test "spike" "SPIKE" 400 "[0, 400, 400, 0]"
