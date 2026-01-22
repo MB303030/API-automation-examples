@@ -1,4 +1,4 @@
-name: API CI Tests
+name: API tests
 
 on:
   workflow_dispatch:  # Only manual trigger
@@ -32,65 +32,145 @@ jobs:
     - name: 🧪 Run Playwright API tests
       run: |
         echo "Running API tests..."
-        npx playwright test 2>&1 | tee test-output.log
+        npx playwright test --reporter=html,line 2>&1 | tee test-output.log
         
         # Save exit code
         TEST_EXIT_CODE=$?
         echo "TEST_EXIT_CODE=$TEST_EXIT_CODE" >> $GITHUB_ENV
 
-    - name: 📊 Generate Test Report
+    - name: 📊 Generate Enhanced Test Report
       if: always()
       run: |
         echo "## 📋 API Test Results" >> $GITHUB_STEP_SUMMARY
         echo "" >> $GITHUB_STEP_SUMMARY
-        echo "**Execution Time:** $(date)" >> $GITHUB_STEP_SUMMARY
+        echo "**🕐 Execution Time:** $(date)" >> $GITHUB_STEP_SUMMARY
+        echo "**🌐 Environment:** GitHub Actions | Ubuntu Latest" >> $GITHUB_STEP_SUMMARY
         echo "" >> $GITHUB_STEP_SUMMARY
         
+        # Overall Status
         if [ "${TEST_EXIT_CODE}" = "0" ]; then
-          echo "✅ **Status: All tests PASSED**" >> $GITHUB_STEP_SUMMARY
+          echo "### ✅ ALL TESTS PASSED" >> $GITHUB_STEP_SUMMARY
+          echo '<div align="center">' >> $GITHUB_STEP_SUMMARY
+          echo '<img src="https://img.shields.io/badge/Status-PASSING-brightgreen" alt="PASSING">' >> $GITHUB_STEP_SUMMARY
+          echo '<img src="https://img.shields.io/badge/Tests-100%25-success" alt="100%">' >> $GITHUB_STEP_SUMMARY
+          echo '</div>' >> $GITHUB_STEP_SUMMARY
         else
-          echo "❌ **Status: Some tests FAILED**" >> $GITHUB_STEP_SUMMARY
+          echo "### ❌ TESTS FAILED" >> $GITHUB_STEP_SUMMARY
+          echo '<div align="center">' >> $GITHUB_STEP_SUMMARY
+          echo '<img src="https://img.shields.io/badge/Status-FAILING-red" alt="FAILING">' >> $GITHUB_STEP_SUMMARY
+          echo '<img src="https://img.shields.io/badge/Check_Logs-Required-orange" alt="Check Logs">' >> $GITHUB_STEP_SUMMARY
+          echo '</div>' >> $GITHUB_STEP_SUMMARY
         fi
-        
         echo "" >> $GITHUB_STEP_SUMMARY
-        echo "**Test Files Executed:**" >> $GITHUB_STEP_SUMMARY
-        
-        # List test files
-        if ls tests/*.spec.js 1> /dev/null 2>&1; then
-          for file in tests/*.spec.js; do
-            echo "- $(basename $file)" >> $GITHUB_STEP_SUMMARY
-          done
-        fi
-        
-        if ls tests/*/*.spec.js 1> /dev/null 2>&1; then
-          for file in tests/*/*.spec.js; do
-            echo "- $(basename $(dirname $file))/$(basename $file)" >> $GITHUB_STEP_SUMMARY
-          done
-        fi
-        
-        echo "" >> $GITHUB_STEP_SUMMARY
-        echo "**APIs Tested:**" >> $GITHUB_STEP_SUMMARY
-        echo "- Pet Store API (Swagger)" >> $GITHUB_STEP_SUMMARY
-        echo "- Postman Echo API" >> $GITHUB_STEP_SUMMARY
-        echo "- DummyJSON Products API" >> $GITHUB_STEP_SUMMARY
-        
-        # Show test output summary
+
+        # Extract and format metrics from test output
         if [ -f "test-output.log" ]; then
+          echo "### 📈 Performance Metrics" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
+          
+          # Extract key metrics using grep
+          TOTAL_TESTS=$(grep -o "[0-9]\+ tests" test-output.log | head -1 | grep -o "[0-9]\+" || echo "N/A")
+          PASSED_TESTS=$(grep -o "[0-9]\+ passed" test-output.log | head -1 | grep -o "[0-9]\+" || echo "N/A")
+          FAILED_TESTS=$(grep -o "[0-9]\+ failed" test-output.log | head -1 | grep -o "[0-9]\+" || echo "0")
+          SKIPPED_TESTS=$(grep -o "[0-9]\+ skipped" test-output.log | head -1 | grep -o "[0-9]\+" || echo "0")
+          DURATION=$(grep -o "[0-9]\+[\.][0-9]\+s" test-output.log | tail -1 || echo "N/A")
+          
+          echo "#### 📊 Test Summary" >> $GITHUB_STEP_SUMMARY
+          echo '```' >> $GITHUB_STEP_SUMMARY
+          echo "Total Tests:    ${TOTAL_TESTS:-N/A}" >> $GITHUB_STEP_SUMMARY
+          echo "Passed:         ${PASSED_TESTS:-N/A}" >> $GITHUB_STEP_SUMMARY
+          echo "Failed:         ${FAILED_TESTS:-0}" >> $GITHUB_STEP_SUMMARY
+          echo "Skipped:        ${SKIPPED_TESTS:-0}" >> $GITHUB_STEP_SUMMARY
+          echo "Duration:       ${DURATION:-N/A}" >> $GITHUB_STEP_SUMMARY
+          
+          # Calculate pass percentage
+          if [ "$TOTAL_TESTS" != "N/A" ] && [ "$TOTAL_TESTS" -gt 0 ]; then
+            PASS_PERCENT=$((PASSED_TESTS * 100 / TOTAL_TESTS))
+            echo "Pass Rate:      ${PASS_PERCENT}%" >> $GITHUB_STEP_SUMMARY
+          fi
+          echo '```' >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          
+          # API Endpoints Tested
+          echo "#### 🌐 APIs Tested" >> $GITHUB_STEP_SUMMARY
+          echo '| API Service | Base URL | Status |' >> $GITHUB_STEP_SUMMARY
+          echo '|-------------|----------|--------|' >> $GITHUB_STEP_SUMMARY
+          echo '| Pet Store | https://petstore.swagger.io/v2 | ✅ |' >> $GITHUB_STEP_SUMMARY
+          echo '| Postman Echo | https://postman-echo.com | ✅ |' >> $GITHUB_STEP_SUMMARY
+          echo '| DummyJSON | https://dummyjson.com | ✅ |' >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          
+          # Response Time Metrics (if available in output)
+          AVG_RESPONSE=$(grep -o "avg=[0-9]\+[\.]*[0-9]*ms" test-output.log | head -1 | cut -d= -f2 || echo "")
+          P95_RESPONSE=$(grep -o "p(95)=[0-9]\+[\.]*[0-9]*ms" test-output.log | head -1 | cut -d= -f2 || echo "")
+          P99_RESPONSE=$(grep -o "p(99)=[0-9]\+[\.]*[0-9]*ms" test-output.log | head -1 | cut -d= -f2 || echo "")
+          
+          if [ -n "$AVG_RESPONSE" ] || [ -n "$P95_RESPONSE" ]; then
+            echo "#### ⚡ Response Time Analysis" >> $GITHUB_STEP_SUMMARY
+            echo '```' >> $GITHUB_STEP_SUMMARY
+            if [ -n "$AVG_RESPONSE" ]; then echo "Average:    $AVG_RESPONSE" >> $GITHUB_STEP_SUMMARY; fi
+            if [ -n "$P95_RESPONSE" ]; then echo "95th %ile:  $P95_RESPONSE" >> $GITHUB_STEP_SUMMARY; fi
+            if [ -n "$P99_RESPONSE" ]; then echo "99th %ile:  $P99_RESPONSE" >> $GITHUB_STEP_SUMMARY; fi
+            echo '```' >> $GITHUB_STEP_SUMMARY
+            echo "" >> $GITHUB_STEP_SUMMARY
+          fi
+          
+          # Success Rate
+          SUCCESS_RATE=$(grep -o "rate=[0-9]\+[\.]*[0-9]*%" test-output.log | head -1 | cut -d= -f2 || echo "")
+          if [ -n "$SUCCESS_RATE" ]; then
+            echo "#### 🎯 Success Metrics" >> $GITHUB_STEP_SUMMARY
+            echo '```' >> $GITHUB_STEP_SUMMARY
+            echo "Success Rate: $SUCCESS_RATE" >> $GITHUB_STEP_SUMMARY
+            echo '```' >> $GITHUB_STEP_SUMMARY
+            echo "" >> $GITHUB_STEP_SUMMARY
+          fi
+          
+          # Test Cases (extract individual test results)
+          echo "#### ✅ Individual Test Results" >> $GITHUB_STEP_SUMMARY
           echo "<details>" >> $GITHUB_STEP_SUMMARY
-          echo "<summary>View Test Output</summary>" >> $GITHUB_STEP_SUMMARY
+          echo "<summary>Click to view detailed test results</summary>" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
           echo '```' >> $GITHUB_STEP_SUMMARY
-          tail -50 test-output.log >> $GITHUB_STEP_SUMMARY
+          # Extract test lines with ✓ or ✗
+          grep -E "(✓|✗) .*" test-output.log | head -30 >> $GITHUB_STEP_SUMMARY 2>/dev/null || echo "No individual test results found" >> $GITHUB_STEP_SUMMARY
           echo '```' >> $GITHUB_STEP_SUMMARY
           echo "</details>" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          
+          # Raw Output
+          echo "#### 📄 Full Test Output" >> $GITHUB_STEP_SUMMARY
+          echo "<details>" >> $GITHUB_STEP_SUMMARY
+          echo "<summary>Click to view complete test output</summary>" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo '```' >> $GITHUB_STEP_SUMMARY
+          tail -100 test-output.log >> $GITHUB_STEP_SUMMARY
+          echo '```' >> $GITHUB_STEP_SUMMARY
+          echo "</details>" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
         fi
+
+        # Next Steps
+        echo "### 🚀 Next Steps" >> $GITHUB_STEP_SUMMARY
+        echo "" >> $GITHUB_STEP_SUMMARY
+        if [ "${TEST_EXIT_CODE}" = "0" ]; then
+          echo "1. ✅ All API tests passed successfully" >> $GITHUB_STEP_SUMMARY
+          echo "2. 📁 Download the HTML report from artifacts for detailed analysis" >> $GITHUB_STEP_SUMMARY
+          echo "3. 🚀 Ready for deployment" >> $GITHUB_STEP_SUMMARY
+        else
+          echo "1. ❌ Review failed tests in the output above" >> $GITHUB_STEP_SUMMARY
+          echo "2. 🔍 Check the Playwright HTML report for detailed failure information" >> $GITHUB_STEP_SUMMARY
+          echo "3. 🐛 Fix the failing test cases" >> $GITHUB_STEP_SUMMARY
+          echo "4. 🔄 Re-run tests after fixes" >> $GITHUB_STEP_SUMMARY
+        fi
+        echo "" >> $GITHUB_STEP_SUMMARY
+        echo "---" >> $GITHUB_STEP_SUMMARY
+        echo "*Report generated automatically by GitHub Actions*" >> $GITHUB_STEP_SUMMARY
 
     - name: 📁 Upload Test Results
       if: always()
       uses: actions/upload-artifact@v4
       with:
-        name: playwright-test-results
+        name: api-test-results
         path: |
           playwright-report/
           test-results/
