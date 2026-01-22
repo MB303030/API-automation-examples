@@ -1,0 +1,245 @@
+name: StatusFix
+
+on:
+  workflow_dispatch:
+    inputs:
+      test_type:
+        description: 'Select which performance test to run'
+        required: true
+        default: 'all'
+        type: choice
+        options:
+          - all
+          - smoke
+          - load
+          - spike
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+
+    steps:
+    - uses: actions/checkout@v4
+    
+    # ----------------------------------------------------
+    # Setup k6 NATIVELY (NO DOCKER)
+    # ----------------------------------------------------
+    - name: Setup k6
+      uses: grafana/setup-k6-action@v1
+
+    # ----------------------------------------------------
+    # Decide which tests to run
+    # ----------------------------------------------------
+    - name: Determine which tests to run
+      run: |
+        TEST_TYPE="${{ github.event.inputs.test_type }}"
+
+        if [ "$TEST_TYPE" = "smoke" ]; then
+          echo "RUN_SMOKE=true" >> $GITHUB_ENV
+          echo "RUN_LOAD=false" >> $GITHUB_ENV
+          echo "RUN_SPIKE=false" >> $GITHUB_ENV
+        elif [ "$TEST_TYPE" = "load" ]; then
+          echo "RUN_SMOKE=false" >> $GITHUB_ENV
+          echo "RUN_LOAD=true" >> $GITHUB_ENV
+          echo "RUN_SPIKE=false" >> $GITHUB_ENV
+        elif [ "$TEST_TYPE" = "spike" ]; then
+          echo "RUN_SMOKE=false" >> $GITHUB_ENV
+          echo "RUN_LOAD=false" >> $GITHUB_ENV
+          echo "RUN_SPIKE=true" >> $GITHUB_ENV
+        else
+          echo "RUN_SMOKE=true" >> $GITHUB_ENV
+          echo "RUN_LOAD=true" >> $GITHUB_ENV
+          echo "RUN_SPIKE=true" >> $GITHUB_ENV
+        fi
+
+    # ----------------------------------------------------
+    # Run selected tests with NATIVE k6 (NO DOCKER)
+    # ----------------------------------------------------
+    - name: Run Selected Performance Tests
+      run: |
+        declare -A TESTS=(
+          ["smoke"]="tests/performance/smoke/dummyjson-smoke.js"
+          ["load"]="tests/performance/load/dummyjson-load.js"
+          ["spike"]="tests/performance/spike/dummyjson-spike.js"
+        )
+
+        for TEST in smoke load spike; do
+          RUN_VAR="RUN_${TEST^^}"
+          if [ "${!RUN_VAR}" = "true" ]; then
+            echo "🚀 Running ${TEST^} test..."
+            echo "Test file: ${TESTS[$TEST]}"
+            
+            # Check if file exists
+            if [ ! -f "${TESTS[$TEST]}" ]; then
+              echo "❌ Error: File ${TESTS[$TEST]} not found!"
+              echo "Available files in tests/:"
+              find tests -name "*.js" -type f | head -20
+              continue
+            fi
+            
+            # Run with JSON output for better metrics
+            k6 run "${TESTS[$TEST]}" \
+              --out json="k6-${TEST}-results.json" \
+              2>&1 | tee "k6-${TEST}-output.txt"
+            
+            # Check exit code
+            if [ $? -eq 0 ]; then
+              echo "✅ ${TEST^} test completed successfully"
+            else
+              echo "❌ ${TEST^} test failed"
+            fi
+          fi
+        done
+
+    # ----------------------------------------------------
+    # Report: GRAPH + METRICS PER TEST (IMPROVED)
+    # ----------------------------------------------------
+    - name: Create Performance Report
+      run: |
+        echo "## 🧪 K6 Performance Test Report" >> $GITHUB_STEP_SUMMARY
+        echo "" >> $GITHUB_STEP_SUMMARY
+        echo "*Report generated at: $(date)*" >> $GITHUB_STEP_SUMMARY
+        echo "*Selected test type: ${{ github.event.inputs.test_type }}*" >> $GITHUB_STEP_SUMMARY
+        echo "" >> $GITHUB_STEP_SUMMARY
+
+        render_test () {
+          NAME=$1
+          TITLE=$2
+          MAX_VUS=$3
+          LINE=$4
+          OUTPUT_FILE="k6-${NAME}-output.txt"
+
+          if [ -f "$OUTPUT_FILE" ]; then
+            echo "### 🚦 ${TITLE} Test" >> $GITHUB_STEP_SUMMARY
+            echo "" >> $GITHUB_STEP_SUMMARY
+
+            # -------- TEST STATUS --------
+            # FIXED: Better status detection for all test types
+            STATUS="COMPLETED"  # Default to completed
+            
+            # Check for threshold violations
+            if grep -q "thresholds on metrics.*have been crossed" "$OUTPUT_FILE"; then
+              STATUS="THRESHOLD_VIOLATIONS"
+            fi
+            
+            # Check for errors (case insensitive)
+            if grep -qi "ERRO\|ERROR\|Error:" "$OUTPUT_FILE"; then
+              # Don't override if it's just threshold warnings
+              if ! grep -q "thresholds on metrics.*have been crossed" "$OUTPUT_FILE"; then
+                STATUS="ERROR"
+              fi
+            fi
+            
+            # Check if test actually ran (has metrics output)
+            if ! grep -q "iterations.*:" "$OUTPUT_FILE" && ! grep -q "http_reqs.*:" "$OUTPUT_FILE"; then
+              STATUS="FAILED_NO_OUTPUT"
+            fi
+            
+            # Display status
+            case "$STATUS" in
+              "COMPLETED")
+                echo "✅ **Status: COMPLETED SUCCESSFULLY**" >> $GITHUB_STEP_SUMMARY
+                ;;
+              "THRESHOLD_VIOLATIONS")
+                echo "⚠️ **Status: COMPLETED WITH THRESHOLD VIOLATIONS**" >> $GITHUB_STEP_SUMMARY
+                ;;
+              "ERROR")
+                echo "❌ **Status: FAILED WITH ERRORS**" >> $GITHUB_STEP_SUMMARY
+                ;;
+              "FAILED_NO_OUTPUT")
+                echo "❌ **Status: FAILED - NO METRICS GENERATED**" >> $GITHUB_STEP_SUMMARY
+                ;;
+              *)
+                echo "✅ **Status: COMPLETED**" >> $GITHUB_STEP_SUMMARY
+                ;;
+            esac
+            echo "" >> $GITHUB_STEP_SUMMARY
+
+            # -------- GRAPH --------
+            echo "#### 📈 Load Pattern" >> $GITHUB_STEP_SUMMARY
+            echo '```mermaid' >> $GITHUB_STEP_SUMMARY
+            echo 'xychart-beta' >> $GITHUB_STEP_SUMMARY
+            echo "    title \"${TITLE} Test Load Pattern\"" >> $GITHUB_STEP_SUMMARY
+            echo '    x-axis "Time (minutes)"' >> $GITHUB_STEP_SUMMARY
+            echo "    y-axis \"Virtual Users\" 0 --> ${MAX_VUS}" >> $GITHUB_STEP_SUMMARY
+            echo "    line ${LINE}" >> $GITHUB_STEP_SUMMARY
+            echo '```' >> $GITHUB_STEP_SUMMARY
+            echo "" >> $GITHUB_STEP_SUMMARY
+
+            # -------- KEY METRICS --------
+            echo "#### 📊 Key Performance Indicators" >> $GITHUB_STEP_SUMMARY
+            echo '```' >> $GITHUB_STEP_SUMMARY
+            
+            # Extract key metrics
+            ITERATIONS=$(grep "iterations.*:" "$OUTPUT_FILE" | tail -1 | awk '{print $2}' | tr -d ',' 2>/dev/null || echo "N/A")
+            HTTP_REQS=$(grep "http_reqs.*:" "$OUTPUT_FILE" | tail -1 | awk '{print $2}' | tr -d ',' 2>/dev/null || echo "N/A")
+            AVG_RESPONSE=$(grep "http_req_duration.*avg=" "$OUTPUT_FILE" | tail -1 | sed 's/.*avg=//' | awk '{print $1}' 2>/dev/null || echo "N/A")
+            FAILED_RATE=$(grep "http_req_failed.*rate=" "$OUTPUT_FILE" | tail -1 | sed 's/.*rate=//' | awk '{print $1}' 2>/dev/null || echo "N/A")
+            
+            echo "Total Iterations: $ITERATIONS" >> $GITHUB_STEP_SUMMARY
+            echo "Total Requests: $HTTP_REQS" >> $GITHUB_STEP_SUMMARY
+            echo "Avg Response Time: $AVG_RESPONSE" >> $GITHUB_STEP_SUMMARY
+            echo "Failure Rate: $FAILED_RATE" >> $GITHUB_STEP_SUMMARY
+            
+            # Check for p95
+            if grep -q "http_req_duration.*p\\(95\\)=" "$OUTPUT_FILE"; then
+              P95_RESPONSE=$(grep "http_req_duration.*p\\(95\\)=" "$OUTPUT_FILE" | tail -1 | sed 's/.*p(95)=//' | awk '{print $1}' 2>/dev/null || echo "N/A")
+              echo "p95 Response Time: $P95_RESPONSE" >> $GITHUB_STEP_SUMMARY
+            fi
+            
+            # Check for p99
+            if grep -q "http_req_duration.*p\\(99\\)=" "$OUTPUT_FILE"; then
+              P99_RESPONSE=$(grep "http_req_duration.*p\\(99\\)=" "$OUTPUT_FILE" | tail -1 | sed 's/.*p(99)=//' | awk '{print $1}' 2>/dev/null || echo "N/A")
+              echo "p99 Response Time: $P99_RESPONSE" >> $GITHUB_STEP_SUMMARY
+            fi
+            
+            # Check for checks
+            if grep -q "checks_succeeded" "$OUTPUT_FILE"; then
+              SUCCESS_RATE=$(grep "checks_succeeded" "$OUTPUT_FILE" | awk '{print $2}' | tr -d ',' 2>/dev/null)
+              echo "Success Rate: $SUCCESS_RATE" >> $GITHUB_STEP_SUMMARY
+            fi
+            
+            echo '```' >> $GITHUB_STEP_SUMMARY
+            echo "" >> $GITHUB_STEP_SUMMARY
+
+            # -------- THRESHOLDS --------
+            echo "#### 🎯 Thresholds Status" >> $GITHUB_STEP_SUMMARY
+            echo '```' >> $GITHUB_STEP_SUMMARY
+            # Extract threshold information
+            grep -A2 -B2 "threshold.*=" "$OUTPUT_FILE" | tail -20 >> $GITHUB_STEP_SUMMARY || echo "No threshold data found" >> $GITHUB_STEP_SUMMARY
+            echo '```' >> $GITHUB_STEP_SUMMARY
+            echo "" >> $GITHUB_STEP_SUMMARY
+
+            # -------- RAW OUTPUT --------
+            echo "<details>" >> $GITHUB_STEP_SUMMARY
+            echo "<summary>Click to view full ${TITLE} Test output</summary>" >> $GITHUB_STEP_SUMMARY
+            echo "" >> $GITHUB_STEP_SUMMARY
+            echo '```' >> $GITHUB_STEP_SUMMARY
+            tail -80 "$OUTPUT_FILE" >> $GITHUB_STEP_SUMMARY
+            echo '```' >> $GITHUB_STEP_SUMMARY
+            echo "</details>" >> $GITHUB_STEP_SUMMARY
+            echo "" >> $GITHUB_STEP_SUMMARY
+            echo "---" >> $GITHUB_STEP_SUMMARY
+          else
+            echo "### 🚦 ${TITLE} Test" >> $GITHUB_STEP_SUMMARY
+            echo "" >> $GITHUB_STEP_SUMMARY
+            echo "❌ **Test not run or output file missing**" >> $GITHUB_STEP_SUMMARY
+            echo "" >> $GITHUB_STEP_SUMMARY
+            echo "---" >> $GITHUB_STEP_SUMMARY
+          fi
+        }
+
+        # Render each test that was run
+        [ "${RUN_SMOKE}" = "true" ] && render_test "smoke" "Smoke" 5 "[1, 3, 5, 0]"
+        [ "${RUN_LOAD}" = "true" ] && render_test "load" "Load" 120 "[10, 30, 80, 120, 60, 20]"
+        [ "${RUN_SPIKE}" = "true" ] && render_test "spike" "Spike" 400 "[5, 50, 200, 400, 200, 50, 10]"
+
+        # Summary
+        echo "### 📝 Summary" >> $GITHUB_STEP_SUMMARY
+        echo "" >> $GITHUB_STEP_SUMMARY
+        echo "Tests run based on selection: **${{ github.event.inputs.test_type }}**" >> $GITHUB_STEP_SUMMARY
+        echo "" >> $GITHUB_STEP_SUMMARY
+        echo "**Next steps:**" >> $GITHUB_STEP_SUMMARY
+        echo "- Review threshold violations (if any)" >> $GITHUB_STEP_SUMMARY
+        echo "- Check response time metrics" >> $GITHUB_STEP_SUMMARY  
+        echo "- Verify success rates meet requirements" >> $GITHUB_STEP_SUMMARY
