@@ -177,8 +177,8 @@ jobs:
             
             # Calculate percentages
             if [ "$FAILED_RATE" != "0" ] && [ "$FAILED_RATE" != "N/A" ]; then
-              FAILED_PERCENT=$(echo "$FAILED_RATE * 100" | bc -l 2>/dev/null | xargs printf "%.1f" || echo "$FAILED_RATE")
-              echo "🔴 **Failed Requests:** ${FAILED_PERCENT}% of requests had errors" >> $GITHUB_STEP_SUMMARY
+              FAILED_PERCENT=$(echo "$FAILED_RATE * 100" | bc -l 2>/dev/null | xargs printf "%.1f%%" 2>/dev/null || echo "$FAILED_RATE")
+              echo "🔴 **Failed Requests:** ${FAILED_PERCENT} of requests had errors" >> $GITHUB_STEP_SUMMARY
               echo "   *Technical metric:* http_req_failed rate=${FAILED_RATE}" >> $GITHUB_STEP_SUMMARY
             else
               echo "🟢 **Failed Requests:** Very low error rate" >> $GITHUB_STEP_SUMMARY
@@ -346,19 +346,31 @@ jobs:
             fi
             if [ "$P95_RESPONSE" != "N/A" ]; then 
               TARGET="<2000ms"
-              if [ "${P95_RESPONSE%%.*}" -lt 2000 ]; then
-                STATUS="✅ Within target"
+              # Safely compare numbers
+              if [[ "$P95_RESPONSE" =~ ^[0-9]+(\.[0-9]+)?$ ]]; then
+                P95_NUM=${P95_RESPONSE%%.*}
+                if [ "$P95_NUM" -lt 2000 ]; then
+                  STATUS="✅ Within target"
+                else
+                  STATUS="❌ Exceeds target"
+                fi
               else
-                STATUS="❌ Exceeds target"
+                STATUS="⚠️ Cannot parse"
               fi
               echo "| 95th Percentile | $P95_RESPONSE ms | $STATUS (target $TARGET) |" >> $GITHUB_STEP_SUMMARY
             fi
             if [ "$P99_RESPONSE" != "N/A" ]; then 
               TARGET="<4000ms"
-              if [ "${P99_RESPONSE%%.*}" -lt 4000 ]; then
-                STATUS="✅ Within target"
+              # Safely compare numbers
+              if [[ "$P99_RESPONSE" =~ ^[0-9]+(\.[0-9]+)?$ ]]; then
+                P99_NUM=${P99_RESPONSE%%.*}
+                if [ "$P99_NUM" -lt 4000 ]; then
+                  STATUS="✅ Within target"
+                else
+                  STATUS="❌ Exceeds target"
+                fi
               else
-                STATUS="❌ Exceeds target"
+                STATUS="⚠️ Cannot parse"
               fi
               echo "| 99th Percentile | $P99_RESPONSE ms | $STATUS (target $TARGET) |" >> $GITHUB_STEP_SUMMARY
             fi
@@ -383,15 +395,17 @@ jobs:
             echo '| Metric | Value | Target | Status |' >> $GITHUB_STEP_SUMMARY
             echo '|--------|-------|--------|--------|' >> $GITHUB_STEP_SUMMARY
             if [ "$FAILED_RATE" != "N/A" ]; then 
-              FAILED_PERCENT=$(echo "$FAILED_RATE * 100" | bc -l 2>/dev/null | xargs printf "%.2f%%" || echo "$FAILED_RATE")
+              FAILED_PERCENT=$(echo "$FAILED_RATE * 100" | bc -l 2>/dev/null | xargs printf "%.2f%%" 2>/dev/null || echo "$FAILED_RATE")
               TARGET="<10%"
-              if [ "$FAILED_RATE" != "N/A" ]; then
+              if [ "$FAILED_RATE" != "N/A" ] && [[ "$FAILED_RATE" =~ ^[0-9.]+$ ]]; then
                 if (( $(echo "$FAILED_RATE < 0.10" | bc -l 2>/dev/null) )); then
                   STATUS="✅ PASS"
                 else
                   STATUS="❌ FAIL"
                 fi
                 echo "| Failure Rate | $FAILED_PERCENT | $TARGET | $STATUS |" >> $GITHUB_STEP_SUMMARY
+              else
+                echo "| Failure Rate | $FAILED_PERCENT | $TARGET | ⚠️ N/A |" >> $GITHUB_STEP_SUMMARY
               fi
             fi
             
@@ -416,7 +430,9 @@ jobs:
               else
                 STATUS="❌ FAIL"
               fi
-              echo "| Page Load Check | $PAGE_LINE | Functional test | $STATUS |" >> $GITHUB_STEP_SUMMARY
+              # Escape special characters in PAGE_LINE
+              ESCAPED_PAGE_LINE=$(echo "$PAGE_LINE" | sed 's/|/\\|/g')
+              echo "| Page Load Check | $ESCAPED_PAGE_LINE | Functional test | $STATUS |" >> $GITHUB_STEP_SUMMARY
             fi
             
             if grep -q "popular product loaded" "$OUTPUT_FILE"; then
@@ -426,7 +442,9 @@ jobs:
               else
                 STATUS="❌ FAIL"
               fi
-              echo "| Product Load Check | $PRODUCT_LINE | Functional test | $STATUS |" >> $GITHUB_STEP_SUMMARY
+              # Escape special characters in PRODUCT_LINE
+              ESCAPED_PRODUCT_LINE=$(echo "$PRODUCT_LINE" | sed 's/|/\\|/g')
+              echo "| Product Load Check | $ESCAPED_PRODUCT_LINE | Functional test | $STATUS |" >> $GITHUB_STEP_SUMMARY
             fi
             
             echo "" >> $GITHUB_STEP_SUMMARY
@@ -463,9 +481,15 @@ jobs:
         }
 
         # Render each test that was run
-        [ "${RUN_SMOKE}" = "true" ] && render_test "smoke" "Smoke" 5 "[1, 3, 5, 0]"
-        [ "${RUN_LOAD}" = "true" ] && render_test "load" "Load" 120 "[10, 30, 80, 120, 60, 20]"
-        [ "${RUN_SPIKE}" = "true" ] && render_test "spike" "Spike" 400 "[5, 50, 200, 400, 200, 50, 10]"
+        if [ "${RUN_SMOKE}" = "true" ]; then
+          render_test "smoke" "Smoke" 5 "[1, 3, 5, 0]"
+        fi
+        if [ "${RUN_LOAD}" = "true" ]; then
+          render_test "load" "Load" 120 "[10, 30, 80, 120, 60, 20]"
+        fi
+        if [ "${RUN_SPIKE}" = "true" ]; then
+          render_test "spike" "Spike" 400 "[5, 50, 200, 400, 200, 50, 10]"
+        fi
 
         # -------- EXECUTIVE SUMMARY WITH REAL NUMBERS --------
         echo "### 📝 Executive Summary with Key Numbers" >> $GITHUB_STEP_SUMMARY
@@ -554,11 +578,18 @@ jobs:
         fi
         
         if [ -n "$SPIKE_P95" ]; then
-          if [ "${SPIKE_P95%%.*}" -lt 2000 ]; then
-            echo "🟢 **Response Time (P95):** ${SPIKE_P95}ms ✅" >> $GITHUB_STEP_SUMMARY
-            echo "   *Target:* <2000ms | *Dev Metric:* p(95)<2000" >> $GITHUB_STEP_SUMMARY
+          # Safely check if it's a number
+          if [[ "$SPIKE_P95" =~ ^[0-9]+(\.[0-9]+)?$ ]]; then
+            SPIKE_P95_NUM=${SPIKE_P95%%.*}
+            if [ "$SPIKE_P95_NUM" -lt 2000 ]; then
+              echo "🟢 **Response Time (P95):** ${SPIKE_P95}ms ✅" >> $GITHUB_STEP_SUMMARY
+              echo "   *Target:* <2000ms | *Dev Metric:* p(95)<2000" >> $GITHUB_STEP_SUMMARY
+            else
+              echo "🔴 **Response Time (P95):** ${SPIKE_P95}ms ❌" >> $GITHUB_STEP_SUMMARY
+              echo "   *Target:* <2000ms | *Dev Metric:* p(95)<2000" >> $GITHUB_STEP_SUMMARY
+            fi
           else
-            echo "🔴 **Response Time (P95):** ${SPIKE_P95}ms ❌" >> $GITHUB_STEP_SUMMARY
+            echo "⚠️ **Response Time (P95):** ${SPIKE_P95}ms" >> $GITHUB_STEP_SUMMARY
             echo "   *Target:* <2000ms | *Dev Metric:* p(95)<2000" >> $GITHUB_STEP_SUMMARY
           fi
         fi
@@ -637,7 +668,11 @@ jobs:
         elif [ "$OVERALL_STATUS" = "🟡 WARNING" ]; then
           echo "> 'The website works but only ${SPIKE_USER_EXPERIENCE}% of users have a good experience during peak times (target: 85%+). We should improve this before it affects customer satisfaction.'" >> $GITHUB_STEP_SUMMARY
         else
-          echo "> 'Performance is good under normal conditions. The site is fast (${SPIKE_P95}ms response time) and stable for typical usage patterns up to 400 concurrent users.'" >> $GITHUB_STEP_SUMMARY
+          if [ -n "$SPIKE_P95" ]; then
+            echo "> 'Performance is good under normal conditions. The site is fast (${SPIKE_P95}ms response time) and stable for typical usage patterns up to 400 concurrent users.'" >> $GITHUB_STEP_SUMMARY
+          else
+            echo "> 'Performance is good under normal conditions. The site is stable for typical usage patterns.'" >> $GITHUB_STEP_SUMMARY
+          fi
         fi
         
         echo "" >> $GITHUB_STEP_SUMMARY
