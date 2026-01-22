@@ -69,7 +69,6 @@ jobs:
             echo "🚀 Running ${TEST^} test..."
             echo "Test file: ${TESTS[$TEST]}"
             
-            # Check if file exists
             if [ ! -f "${TESTS[$TEST]}" ]; then
               echo "❌ Error: File ${TESTS[$TEST]} not found!"
               echo "Available files in tests/:"
@@ -77,12 +76,10 @@ jobs:
               continue
             fi
             
-            # Run with JSON output for better metrics
             k6 run "${TESTS[$TEST]}" \
               --out json="k6-${TEST}-results.json" \
               2>&1 | tee "k6-${TEST}-output.txt"
             
-            # Check exit code
             if [ $? -eq 0 ]; then
               echo "✅ ${TEST^} test completed successfully"
             else
@@ -98,11 +95,12 @@ jobs:
       run: |
         echo "## 🧪 K6 Performance Test Report" >> $GITHUB_STEP_SUMMARY
         echo "" >> $GITHUB_STEP_SUMMARY
-        echo "*Report generated at: $(date)*" >> $GITHUB_STEP_SUMMARY
-        echo "*Selected test type: ${{ github.event.inputs.test_type }}*" >> $GITHUB_STEP_SUMMARY
+        echo "Report generated at: $(date)" >> $GITHUB_STEP_SUMMARY
+        echo "Selected test type: ${{ github.event.inputs.test_type }}" >> $GITHUB_STEP_SUMMARY
         echo "" >> $GITHUB_STEP_SUMMARY
 
-        render_test () {
+        # Function to render each test
+        render_test() {
           NAME=$1
           TITLE=$2
           MAX_VUS=$3
@@ -113,7 +111,7 @@ jobs:
             echo "### 🚦 ${TITLE} Test" >> $GITHUB_STEP_SUMMARY
             echo "" >> $GITHUB_STEP_SUMMARY
 
-            # -------- TEST STATUS --------
+            # Test Status
             STATUS="COMPLETED"
             
             if grep -q "thresholds on metrics.*have been crossed" "$OUTPUT_FILE"; then
@@ -132,24 +130,24 @@ jobs:
             
             case "$STATUS" in
               "COMPLETED")
-                echo "✅ **Status: COMPLETED SUCCESSFULLY**" >> $GITHUB_STEP_SUMMARY
+                echo "✅ Status: COMPLETED SUCCESSFULLY" >> $GITHUB_STEP_SUMMARY
                 ;;
               "THRESHOLD_VIOLATIONS")
-                echo "⚠️ **Status: COMPLETED WITH THRESHOLD VIOLATIONS**" >> $GITHUB_STEP_SUMMARY
+                echo "⚠️ Status: COMPLETED WITH THRESHOLD VIOLATIONS" >> $GITHUB_STEP_SUMMARY
                 ;;
               "ERROR")
-                echo "❌ **Status: FAILED WITH ERRORS**" >> $GITHUB_STEP_SUMMARY
+                echo "❌ Status: FAILED WITH ERRORS" >> $GITHUB_STEP_SUMMARY
                 ;;
               "FAILED_NO_OUTPUT")
-                echo "❌ **Status: FAILED - NO METRICS GENERATED**" >> $GITHUB_STEP_SUMMARY
+                echo "❌ Status: FAILED - NO METRICS GENERATED" >> $GITHUB_STEP_SUMMARY
                 ;;
               *)
-                echo "✅ **Status: COMPLETED**" >> $GITHUB_STEP_SUMMARY
+                echo "✅ Status: COMPLETED" >> $GITHUB_STEP_SUMMARY
                 ;;
             esac
             echo "" >> $GITHUB_STEP_SUMMARY
 
-            # -------- GRAPH --------
+            # Graph
             echo "#### 📈 Load Pattern" >> $GITHUB_STEP_SUMMARY
             echo '```mermaid' >> $GITHUB_STEP_SUMMARY
             echo 'xychart-beta' >> $GITHUB_STEP_SUMMARY
@@ -160,90 +158,81 @@ jobs:
             echo '```' >> $GITHUB_STEP_SUMMARY
             echo "" >> $GITHUB_STEP_SUMMARY
 
-            # -------- SIMPLE LANGUAGE SECTION FOR MANUAL TESTERS --------
+            # Plain English Explanation
             echo "#### 🧑‍💻 Plain English Explanation" >> $GITHUB_STEP_SUMMARY
             echo "" >> $GITHUB_STEP_SUMMARY
             echo "**What this test means for the business:**" >> $GITHUB_STEP_SUMMARY
             echo "" >> $GITHUB_STEP_SUMMARY
             
-            # Extract key metrics for simple explanation
+            # Extract metrics
             FAILED_RATE=$(grep "http_req_failed.*rate=" "$OUTPUT_FILE" | tail -1 | sed 's/.*rate=//' | awk '{print $1}' 2>/dev/null || echo "0")
             P95_RESPONSE=$(grep "http_req_duration.*p(95)=" "$OUTPUT_FILE" | tail -1 | sed 's/.*p(95)=//' | awk '{print $1}' 2>/dev/null || echo "N/A")
-            P99_RESPONSE=$(grep "http_req_duration.*p(99)=" "$OUTPUT_FILE" | tail -1 | sed 's/.*p(99)=//' | awk '{print $1}' 2>/dev/null || echo "N/A")
             CHECKS_TOTAL=$(grep "checks_total.*:" "$OUTPUT_FILE" | tail -1 | awk '{print $2}' | tr -d ',' 2>/dev/null || echo "0")
             CHECKS_FAILED=$(grep "checks_failed.*:" "$OUTPUT_FILE" | tail -1 | awk '{print $2}' | tr -d ',' 2>/dev/null || echo "0")
             ITERATIONS=$(grep "iterations.*:" "$OUTPUT_FILE" | tail -1 | awk '{print $2}' | tr -d ',' 2>/dev/null || echo "0")
             HTTP_REQS=$(grep "http_reqs.*:" "$OUTPUT_FILE" | tail -1 | awk '{print $2}' | tr -d ',' 2>/dev/null || echo "0")
             
-            # Calculate percentages
+            # Show metrics in simple language
             if [ "$FAILED_RATE" != "0" ] && [ "$FAILED_RATE" != "N/A" ]; then
-              FAILED_PERCENT=$(echo "$FAILED_RATE * 100" | bc -l 2>/dev/null | xargs printf "%.1f%%" 2>/dev/null || echo "$FAILED_RATE")
-              echo "🔴 **Failed Requests:** ${FAILED_PERCENT} of requests had errors" >> $GITHUB_STEP_SUMMARY
-              echo "   *Technical metric:* http_req_failed rate=${FAILED_RATE}" >> $GITHUB_STEP_SUMMARY
+              FAILED_PERCENT=$(echo "scale=1; $FAILED_RATE * 100" | bc 2>/dev/null || echo "$FAILED_RATE")
+              echo "🔴 Failed Requests: ${FAILED_PERCENT}% of requests had errors" >> $GITHUB_STEP_SUMMARY
+              echo "   Technical metric: http_req_failed rate=${FAILED_RATE}" >> $GITHUB_STEP_SUMMARY
             else
-              echo "🟢 **Failed Requests:** Very low error rate" >> $GITHUB_STEP_SUMMARY
+              echo "🟢 Failed Requests: Very low error rate" >> $GITHUB_STEP_SUMMARY
             fi
             
             if [ "$P95_RESPONSE" != "N/A" ]; then
-              echo "⚡ **Response Speed (95% of requests):** ${P95_RESPONSE}ms" >> $GITHUB_STEP_SUMMARY
-              echo "   *Technical metric:* http_req_duration p(95)=${P95_RESPONSE}ms" >> $GITHUB_STEP_SUMMARY
+              echo "⚡ Response Speed: 95% of requests faster than ${P95_RESPONSE}ms" >> $GITHUB_STEP_SUMMARY
+              echo "   Technical metric: http_req_duration p(95)=${P95_RESPONSE}ms" >> $GITHUB_STEP_SUMMARY
             fi
             
             if [ "$ITERATIONS" != "0" ] && [ "$ITERATIONS" != "N/A" ]; then
-              echo "📊 **Test Volume:** ${ITERATIONS} user sessions simulated" >> $GITHUB_STEP_SUMMARY
-              echo "   *Technical metric:* iterations=${ITERATIONS}" >> $GITHUB_STEP_SUMMARY
-            fi
-            
-            if [ "$HTTP_REQS" != "0" ] && [ "$HTTP_REQS" != "N/A" ]; then
-              echo "🌐 **Total Requests:** ${HTTP_REQS} HTTP requests made" >> $GITHUB_STEP_SUMMARY
-              echo "   *Technical metric:* http_reqs=${HTTP_REQS}" >> $GITHUB_STEP_SUMMARY
+              echo "📊 Test Volume: ${ITERATIONS} user sessions simulated" >> $GITHUB_STEP_SUMMARY
+              echo "   Technical metric: iterations=${ITERATIONS}" >> $GITHUB_STEP_SUMMARY
             fi
             
             if [ "$CHECKS_TOTAL" != "0" ] && [ "$CHECKS_TOTAL" != "N/A" ]; then
-              if [ "$CHECKS_FAILED" != "N/A" ]; then
-                if [ "$CHECKS_TOTAL" -gt 0 ]; then
-                  CHECKS_PASSED=$((CHECKS_TOTAL - CHECKS_FAILED))
-                  CHECKS_SUCCESS_RATE=$((CHECKS_PASSED * 100 / CHECKS_TOTAL))
-                  if [ "$CHECKS_SUCCESS_RATE" -lt 90 ]; then
-                    echo "🔴 **Functionality Checks:** Only ${CHECKS_SUCCESS_RATE}% passed" >> $GITHUB_STEP_SUMMARY
-                    echo "   *Technical metrics:* checks_total=${CHECKS_TOTAL}, checks_failed=${CHECKS_FAILED}" >> $GITHUB_STEP_SUMMARY
-                  else
-                    echo "🟢 **Functionality Checks:** ${CHECKS_SUCCESS_RATE}% passed" >> $GITHUB_STEP_SUMMARY
-                  fi
+              if [ "$CHECKS_FAILED" != "N/A" ] && [ "$CHECKS_TOTAL" -gt 0 ]; then
+                CHECKS_PASSED=$((CHECKS_TOTAL - CHECKS_FAILED))
+                CHECKS_SUCCESS_RATE=$((CHECKS_PASSED * 100 / CHECKS_TOTAL))
+                if [ "$CHECKS_SUCCESS_RATE" -lt 90 ]; then
+                  echo "🔴 Functionality Checks: Only ${CHECKS_SUCCESS_RATE}% passed" >> $GITHUB_STEP_SUMMARY
+                  echo "   Technical metrics: checks_total=${CHECKS_TOTAL}, checks_failed=${CHECKS_FAILED}" >> $GITHUB_STEP_SUMMARY
+                else
+                  echo "🟢 Functionality Checks: ${CHECKS_SUCCESS_RATE}% passed" >> $GITHUB_STEP_SUMMARY
                 fi
               fi
             fi
             
-            # Analyze threshold results for simple explanation
+            # Threshold Analysis
             echo "" >> $GITHUB_STEP_SUMMARY
             echo "**Threshold Analysis:**" >> $GITHUB_STEP_SUMMARY
             
-            # Look for specific threshold patterns in the output
             if grep -q "❌ 'rate>0.85'" "$OUTPUT_FILE"; then
-              RATE=$(grep "❌ 'rate>0.85'" "$OUTPUT_FILE" | sed "s/.*rate=//" | sed "s/%//")
-              USER_RATE=$(echo "$RATE" | sed 's/[^0-9.]//g')
-              if [ -n "$USER_RATE" ]; then
-                echo "🔴 **User Experience:** Only ${USER_RATE}% of users had good experience (needs 85%+)" >> $GITHUB_STEP_SUMMARY
-                echo "   *Technical details:* threshold 'rate>0.85' failed with rate=${RATE}" >> $GITHUB_STEP_SUMMARY
+              RATE=$(grep "❌ 'rate>0.85'" "$OUTPUT_FILE" | sed 's/.*rate=//; s/%//' | tr -d ' ')
+              if [ -n "$RATE" ]; then
+                echo "🔴 User Experience: Only ${RATE}% of users had good experience (needs 85%+)" >> $GITHUB_STEP_SUMMARY
+                echo "   Technical details: threshold 'rate>0.85' failed with rate=${RATE}%" >> $GITHUB_STEP_SUMMARY
               fi
             fi
             
             if grep -q "❌ 'rate<0.10'" "$OUTPUT_FILE"; then
-              RATE=$(grep "❌ 'rate<0.10'" "$OUTPUT_FILE" | sed "s/.*rate=//" | sed "s/%//")
-              ERROR_RATE=$(echo "$RATE" | sed 's/[^0-9.]//g')
-              if [ -n "$ERROR_RATE" ]; then
-                echo "🔴 **System Errors:** ${ERROR_RATE}% error rate (should be under 10%)" >> $GITHUB_STEP_SUMMARY
-                echo "   *Technical details:* threshold 'rate<0.10' failed with rate=${RATE}" >> $GITHUB_STEP_SUMMARY
+              RATE=$(grep "❌ 'rate<0.10'" "$OUTPUT_FILE" | sed 's/.*rate=//; s/%//' | tr -d ' ')
+              if [ -n "$RATE" ]; then
+                echo "🔴 System Errors: ${RATE}% error rate (should be under 10%)" >> $GITHUB_STEP_SUMMARY
+                echo "   Technical details: threshold 'rate<0.10' failed with rate=${RATE}%" >> $GITHUB_STEP_SUMMARY
               fi
             fi
             
             if grep -q "✅ 'p(95)<2000'" "$OUTPUT_FILE"; then
-              P95=$(grep "✅ 'p(95)<2000'" "$OUTPUT_FILE" | sed "s/.*p(95)=//" | sed "s/ms//")
-              echo "🟢 **Speed Test:** 95% of requests faster than ${P95}ms (under 2000ms target)" >> $GITHUB_STEP_SUMMARY
-              echo "   *Technical details:* threshold 'p(95)<2000' passed with p(95)=${P95}ms" >> $GITHUB_STEP_SUMMARY
+              P95=$(grep "✅ 'p(95)<2000'" "$OUTPUT_FILE" | sed 's/.*p(95)=//; s/ms//' | tr -d ' ')
+              if [ -n "$P95" ]; then
+                echo "🟢 Speed Test: 95% of requests faster than ${P95}ms (under 2000ms target)" >> $GITHUB_STEP_SUMMARY
+                echo "   Technical details: threshold 'p(95)<2000' passed with p(95)=${P95}ms" >> $GITHUB_STEP_SUMMARY
+              fi
             fi
             
-            # Check for page load metrics
+            # Page load metrics
             if grep -q "❌ page loaded during spike" "$OUTPUT_FILE"; then
               PAGE_LOAD_LINE=$(grep -A1 "❌ page loaded during spike" "$OUTPUT_FILE" | tail -1)
               SUCCESS_COUNT=$(echo "$PAGE_LOAD_LINE" | grep -o "[0-9]\+ — ✅" | grep -o "[0-9]\+" || echo "0")
@@ -251,222 +240,38 @@ jobs:
               TOTAL=$((SUCCESS_COUNT + FAIL_COUNT))
               if [ "$TOTAL" -gt 0 ]; then
                 SUCCESS_RATE=$((SUCCESS_COUNT * 100 / TOTAL))
-                echo "🔴 **Page Load During Spike:** Only ${SUCCESS_RATE}% of pages loaded successfully" >> $GITHUB_STEP_SUMMARY
-                echo "   *Technical details:* ${SUCCESS_COUNT} passed / ${FAIL_COUNT} failed" >> $GITHUB_STEP_SUMMARY
-              fi
-            fi
-            
-            # Check for product loaded metrics
-            if grep -q "❌ popular product loaded" "$OUTPUT_FILE"; then
-              PRODUCT_LOAD_LINE=$(grep -A1 "❌ popular product loaded" "$OUTPUT_FILE" | tail -1)
-              SUCCESS_COUNT=$(echo "$PRODUCT_LOAD_LINE" | grep -o "[0-9]\+ — ✅" | grep -o "[0-9]\+" || echo "0")
-              FAIL_COUNT=$(echo "$PRODUCT_LOAD_LINE" | grep -o "[0-9]\+ / ❌" | grep -o "[0-9]\+" || echo "0")
-              TOTAL=$((SUCCESS_COUNT + FAIL_COUNT))
-              if [ "$TOTAL" -gt 0 ]; then
-                SUCCESS_RATE=$((SUCCESS_COUNT * 100 / TOTAL))
-                echo "🔴 **Product Page Access:** Only ${SUCCESS_RATE}% could view popular products" >> $GITHUB_STEP_SUMMARY
-                echo "   *Technical details:* ${SUCCESS_COUNT} passed / ${FAIL_COUNT} failed" >> $GITHUB_STEP_SUMMARY
+                echo "🔴 Page Load During Spike: Only ${SUCCESS_RATE}% of pages loaded successfully" >> $GITHUB_STEP_SUMMARY
+                echo "   Technical details: ${SUCCESS_COUNT} passed / ${FAIL_COUNT} failed" >> $GITHUB_STEP_SUMMARY
               fi
             fi
             
             echo "" >> $GITHUB_STEP_SUMMARY
 
-            # -------- ENHANCED METRICS DISPLAY --------
-            echo "#### 📊 Performance Metrics (For Developers & DevOps)" >> $GITHUB_STEP_SUMMARY
+            # Technical Metrics for Developers
+            echo "#### 📊 Technical Metrics" >> $GITHUB_STEP_SUMMARY
             echo "" >> $GITHUB_STEP_SUMMARY
             
-            # Extract key metrics
-            ITERATIONS=$(grep "iterations.*:" "$OUTPUT_FILE" | tail -1 | awk '{print $2}' | tr -d ',' 2>/dev/null || echo "N/A")
-            HTTP_REQS=$(grep "http_reqs.*:" "$OUTPUT_FILE" | tail -1 | awk '{print $2}' | tr -d ',' 2>/dev/null || echo "N/A")
-            AVG_RESPONSE=$(grep "http_req_duration.*avg=" "$OUTPUT_FILE" | tail -1 | sed 's/.*avg=//' | awk '{print $1}' 2>/dev/null || echo "N/A")
-            FAILED_RATE=$(grep "http_req_failed.*rate=" "$OUTPUT_FILE" | tail -1 | sed 's/.*rate=//' | awk '{print $1}' 2>/dev/null || echo "N/A")
-            DATA_RECEIVED=$(grep "data_received.*:" "$OUTPUT_FILE" | tail -1 | sed 's/.*://' | awk '{$1=$1};1' 2>/dev/null || echo "N/A")
-            DATA_SENT=$(grep "data_sent.*:" "$OUTPUT_FILE" | tail -1 | sed 's/.*://' | awk '{$1=$1};1' 2>/dev/null || echo "N/A")
-            
-            # Extract percentile metrics
-            MIN_RESPONSE=$(grep "http_req_duration.*min=" "$OUTPUT_FILE" | tail -1 | sed 's/.*min=//' | awk '{print $1}' 2>/dev/null || echo "N/A")
-            MED_RESPONSE=$(grep "http_req_duration.*med=" "$OUTPUT_FILE" | tail -1 | sed 's/.*med=//' | awk '{print $1}' 2>/dev/null || echo "N/A")
-            MAX_RESPONSE=$(grep "http_req_duration.*max=" "$OUTPUT_FILE" | tail -1 | sed 's/.*max=//' | awk '{print $1}' 2>/dev/null || echo "N/A")
-            P90_RESPONSE=$(grep "http_req_duration.*p(90)=" "$OUTPUT_FILE" | tail -1 | sed 's/.*p(90)=//' | awk '{print $1}' 2>/dev/null || echo "N/A")
-            P95_RESPONSE=$(grep "http_req_duration.*p(95)=" "$OUTPUT_FILE" | tail -1 | sed 's/.*p(95)=//' | awk '{print $1}' 2>/dev/null || echo "N/A")
-            P99_RESPONSE=$(grep "http_req_duration.*p(99)=" "$OUTPUT_FILE" | tail -1 | sed 's/.*p(99)=//' | awk '{print $1}' 2>/dev/null || echo "N/A")
-            
-            # Extract check success rate
-            CHECKS_TOTAL=$(grep "checks_total.*:" "$OUTPUT_FILE" | tail -1 | awk '{print $2}' | tr -d ',' 2>/dev/null || echo "N/A")
-            CHECKS_SUCCEEDED=$(grep "checks_succeeded.*:" "$OUTPUT_FILE" | tail -1 | awk '{print $2}' | tr -d ',' 2>/dev/null || echo "N/A")
-            CHECKS_FAILED=$(grep "checks_failed.*:" "$OUTPUT_FILE" | tail -1 | awk '{print $2}' | tr -d ',' 2>/dev/null || echo "N/A")
-            
-            # Extract VU metrics
-            VUS_MIN=$(grep "vus.*min=" "$OUTPUT_FILE" | tail -1 | sed 's/.*min=//' | awk '{print $1}' 2>/dev/null || echo "N/A")
-            VUS_MAX=$(grep "vus.*max=" "$OUTPUT_FILE" | tail -1 | sed 's/.*max=//' | awk '{print $1}' 2>/dev/null || echo "N/A")
-            
-            # 🎯 THRESHOLDS SECTION WITH REAL NUMBERS
-            echo "##### 🎯 Thresholds Status with Raw Numbers" >> $GITHUB_STEP_SUMMARY
+            # Response times
+            echo "**Response Times:**" >> $GITHUB_STEP_SUMMARY
             echo '```' >> $GITHUB_STEP_SUMMARY
-            # Capture threshold lines and add simple comments
-            THRESHOLD_LINES=$(grep -A1 "✓\|✗" "$OUTPUT_FILE" | head -20)
-            if [ -n "$THRESHOLD_LINES" ]; then
-              echo "$THRESHOLD_LINES" >> $GITHUB_STEP_SUMMARY
-              echo "" >> $GITHUB_STEP_SUMMARY
-              echo "--- RAW METRICS EXTRACTED ---" >> $GITHUB_STEP_SUMMARY
-              # Extract specific numbers for developers
-              if grep -q "rate>0.85" "$OUTPUT_FILE"; then
-                grep "rate>0.85" "$OUTPUT_FILE" | tail -1 >> $GITHUB_STEP_SUMMARY 2>/dev/null || true
-              fi
-              if grep -q "rate<0.10" "$OUTPUT_FILE"; then
-                grep "rate<0.10" "$OUTPUT_FILE" | tail -1 >> $GITHUB_STEP_SUMMARY 2>/dev/null || true
-              fi
-              if grep -q "p(95)<2000" "$OUTPUT_FILE"; then
-                grep "p(95)<2000" "$OUTPUT_FILE" | tail -1 >> $GITHUB_STEP_SUMMARY 2>/dev/null || true
-              fi
-              if grep -q "p(99)<4000" "$OUTPUT_FILE"; then
-                grep "p(99)<4000" "$OUTPUT_FILE" | tail -1 >> $GITHUB_STEP_SUMMARY 2>/dev/null || true
-              fi
-            else
-              echo "No threshold data found" >> $GITHUB_STEP_SUMMARY
-            fi
+            grep "http_req_duration.*=" "$OUTPUT_FILE" | tail -5 >> $GITHUB_STEP_SUMMARY 2>/dev/null || echo "No response time data" >> $GITHUB_STEP_SUMMARY
             echo '```' >> $GITHUB_STEP_SUMMARY
             echo "" >> $GITHUB_STEP_SUMMARY
             
-            # 📈 RESPONSE TIME METRICS TABLE
-            echo "##### ⚡ Response Time Distribution (Developer View)" >> $GITHUB_STEP_SUMMARY
-            echo '| Metric | Value | Status vs Target |' >> $GITHUB_STEP_SUMMARY
-            echo '|--------|-------|------------------|' >> $GITHUB_STEP_SUMMARY
-            if [ "$MIN_RESPONSE" != "N/A" ]; then 
-              echo "| Min Response | $MIN_RESPONSE ms | Baseline performance |" >> $GITHUB_STEP_SUMMARY
-            fi
-            if [ "$AVG_RESPONSE" != "N/A" ]; then 
-              echo "| Average Response | $AVG_RESPONSE ms | Overall system speed |" >> $GITHUB_STEP_SUMMARY
-            fi
-            if [ "$MED_RESPONSE" != "N/A" ]; then 
-              echo "| Median Response | $MED_RESPONSE ms | Typical user experience |" >> $GITHUB_STEP_SUMMARY
-            fi
-            if [ "$P90_RESPONSE" != "N/A" ]; then 
-              echo "| 90th Percentile | $P90_RESPONSE ms | 90% of users see this or better |" >> $GITHUB_STEP_SUMMARY
-            fi
-            if [ "$P95_RESPONSE" != "N/A" ]; then 
-              TARGET="<2000ms"
-              # Safely compare numbers
-              if [[ "$P95_RESPONSE" =~ ^[0-9]+(\.[0-9]+)?$ ]]; then
-                P95_NUM=${P95_RESPONSE%%.*}
-                if [ "$P95_NUM" -lt 2000 ]; then
-                  STATUS="✅ Within target"
-                else
-                  STATUS="❌ Exceeds target"
-                fi
-              else
-                STATUS="⚠️ Cannot parse"
-              fi
-              echo "| 95th Percentile | $P95_RESPONSE ms | $STATUS (target $TARGET) |" >> $GITHUB_STEP_SUMMARY
-            fi
-            if [ "$P99_RESPONSE" != "N/A" ]; then 
-              TARGET="<4000ms"
-              # Safely compare numbers
-              if [[ "$P99_RESPONSE" =~ ^[0-9]+(\.[0-9]+)?$ ]]; then
-                P99_NUM=${P99_RESPONSE%%.*}
-                if [ "$P99_NUM" -lt 4000 ]; then
-                  STATUS="✅ Within target"
-                else
-                  STATUS="❌ Exceeds target"
-                fi
-              else
-                STATUS="⚠️ Cannot parse"
-              fi
-              echo "| 99th Percentile | $P99_RESPONSE ms | $STATUS (target $TARGET) |" >> $GITHUB_STEP_SUMMARY
-            fi
-            if [ "$MAX_RESPONSE" != "N/A" ]; then 
-              echo "| Max Response | $MAX_RESPONSE ms | Worst-case scenario |" >> $GITHUB_STEP_SUMMARY
-            fi
-            echo "" >> $GITHUB_STEP_SUMMARY
-            
-            # 📊 VOLUME METRICS TABLE
-            echo "##### 📊 Volume Metrics" >> $GITHUB_STEP_SUMMARY
-            echo '| Metric | Value | Description |' >> $GITHUB_STEP_SUMMARY
-            echo '|--------|-------|-------------|' >> $GITHUB_STEP_SUMMARY
-            if [ "$ITERATIONS" != "N/A" ]; then echo "| Iterations | $ITERATIONS | Total user sessions simulated |" >> $GITHUB_STEP_SUMMARY; fi
-            if [ "$HTTP_REQS" != "N/A" ]; then echo "| HTTP Requests | $HTTP_REQS | Total API calls made |" >> $GITHUB_STEP_SUMMARY; fi
-            if [ "$VUS_MIN" != "N/A" ] && [ "$VUS_MAX" != "N/A" ]; then 
-              echo "| Virtual Users | $VUS_MIN - $VUS_MAX | Concurrent user range during test |" >> $GITHUB_STEP_SUMMARY
-            fi
-            echo "" >> $GITHUB_STEP_SUMMARY
-            
-            # ✅ SUCCESS METRICS TABLE
-            echo "##### ✅ Success & Error Metrics" >> $GITHUB_STEP_SUMMARY
-            echo '| Metric | Value | Target | Status |' >> $GITHUB_STEP_SUMMARY
-            echo '|--------|-------|--------|--------|' >> $GITHUB_STEP_SUMMARY
-            if [ "$FAILED_RATE" != "N/A" ]; then 
-              FAILED_PERCENT=$(echo "$FAILED_RATE * 100" | bc -l 2>/dev/null | xargs printf "%.2f%%" 2>/dev/null || echo "$FAILED_RATE")
-              TARGET="<10%"
-              if [ "$FAILED_RATE" != "N/A" ] && [[ "$FAILED_RATE" =~ ^[0-9.]+$ ]]; then
-                if (( $(echo "$FAILED_RATE < 0.10" | bc -l 2>/dev/null) )); then
-                  STATUS="✅ PASS"
-                else
-                  STATUS="❌ FAIL"
-                fi
-                echo "| Failure Rate | $FAILED_PERCENT | $TARGET | $STATUS |" >> $GITHUB_STEP_SUMMARY
-              else
-                echo "| Failure Rate | $FAILED_PERCENT | $TARGET | ⚠️ N/A |" >> $GITHUB_STEP_SUMMARY
-              fi
-            fi
-            
-            if [ "$CHECKS_TOTAL" != "N/A" ] && [ "$CHECKS_FAILED" != "N/A" ]; then
-              if [ "$CHECKS_TOTAL" -gt 0 ]; then
-                SUCCESS_PERCENT=$(( (CHECKS_TOTAL - CHECKS_FAILED) * 100 / CHECKS_TOTAL ))
-                TARGET=">90%"
-                if [ "$SUCCESS_PERCENT" -ge 90 ]; then
-                  STATUS="✅ PASS"
-                else
-                  STATUS="❌ FAIL"
-                fi
-                echo "| Check Success Rate | ${SUCCESS_PERCENT}% | $TARGET | $STATUS |" >> $GITHUB_STEP_SUMMARY
-              fi
-            fi
-            
-            # Extract specific check counts from the output
-            if grep -q "page loaded during spike" "$OUTPUT_FILE"; then
-              PAGE_LINE=$(grep -A1 "page loaded during spike" "$OUTPUT_FILE" | tail -1)
-              if echo "$PAGE_LINE" | grep -q "✅"; then
-                STATUS="✅ PASS"
-              else
-                STATUS="❌ FAIL"
-              fi
-              # Escape special characters in PAGE_LINE
-              ESCAPED_PAGE_LINE=$(echo "$PAGE_LINE" | sed 's/|/\\|/g')
-              echo "| Page Load Check | $ESCAPED_PAGE_LINE | Functional test | $STATUS |" >> $GITHUB_STEP_SUMMARY
-            fi
-            
-            if grep -q "popular product loaded" "$OUTPUT_FILE"; then
-              PRODUCT_LINE=$(grep -A1 "popular product loaded" "$OUTPUT_FILE" | tail -1)
-              if echo "$PRODUCT_LINE" | grep -q "✅"; then
-                STATUS="✅ PASS"
-              else
-                STATUS="❌ FAIL"
-              fi
-              # Escape special characters in PRODUCT_LINE
-              ESCAPED_PRODUCT_LINE=$(echo "$PRODUCT_LINE" | sed 's/|/\\|/g')
-              echo "| Product Load Check | $ESCAPED_PRODUCT_LINE | Functional test | $STATUS |" >> $GITHUB_STEP_SUMMARY
-            fi
-            
-            echo "" >> $GITHUB_STEP_SUMMARY
-            
-            # 📡 NETWORK METRICS TABLE
-            echo "##### 📡 Network & Data Metrics" >> $GITHUB_STEP_SUMMARY
-            echo '| Metric | Value |' >> $GITHUB_STEP_SUMMARY
-            echo '|--------|-------|' >> $GITHUB_STEP_SUMMARY
-            if [ "$DATA_RECEIVED" != "N/A" ]; then echo "| Data Received | $DATA_RECEIVED |" >> $GITHUB_STEP_SUMMARY; fi
-            if [ "$DATA_SENT" != "N/A" ]; then echo "| Data Sent | $DATA_SENT |" >> $GITHUB_STEP_SUMMARY; fi
+            # Thresholds
+            echo "**Threshold Results:**" >> $GITHUB_STEP_SUMMARY
+            echo '```' >> $GITHUB_STEP_SUMMARY
+            grep -A1 "✓\|✗" "$OUTPUT_FILE" | head -10 >> $GITHUB_STEP_SUMMARY 2>/dev/null || echo "No threshold data" >> $GITHUB_STEP_SUMMARY
+            echo '```' >> $GITHUB_STEP_SUMMARY
             echo "" >> $GITHUB_STEP_SUMMARY
 
-            # -------- DETAILED OUTPUT --------
-            echo "#### 📄 Raw Test Output (For Debugging)" >> $GITHUB_STEP_SUMMARY
+            # Raw output (collapsed)
+            echo "#### 📄 Detailed Output" >> $GITHUB_STEP_SUMMARY
             echo "<details>" >> $GITHUB_STEP_SUMMARY
             echo "<summary>Click to view complete test output</summary>" >> $GITHUB_STEP_SUMMARY
             echo "" >> $GITHUB_STEP_SUMMARY
             echo '```' >> $GITHUB_STEP_SUMMARY
-            # Show the full relevant output including metrics
-            grep -v "default.*\[.*\].*VUs.*s/" "$OUTPUT_FILE" | \
-              grep -v "running.*s),.*VUs.*complete" | \
-              tail -150 >> $GITHUB_STEP_SUMMARY
+            tail -100 "$OUTPUT_FILE" >> $GITHUB_STEP_SUMMARY
             echo '```' >> $GITHUB_STEP_SUMMARY
             echo "</details>" >> $GITHUB_STEP_SUMMARY
             echo "" >> $GITHUB_STEP_SUMMARY
@@ -474,206 +279,93 @@ jobs:
           else
             echo "### 🚦 ${TITLE} Test" >> $GITHUB_STEP_SUMMARY
             echo "" >> $GITHUB_STEP_SUMMARY
-            echo "❌ **Test not run or output file missing**" >> $GITHUB_STEP_SUMMARY
+            echo "❌ Test not run or output file missing" >> $GITHUB_STEP_SUMMARY
             echo "" >> $GITHUB_STEP_SUMMARY
             echo "---" >> $GITHUB_STEP_SUMMARY
           fi
         }
 
-        # Render each test that was run
+        # Render tests
         if [ "${RUN_SMOKE}" = "true" ]; then
           render_test "smoke" "Smoke" 5 "[1, 3, 5, 0]"
         fi
+        
         if [ "${RUN_LOAD}" = "true" ]; then
           render_test "load" "Load" 120 "[10, 30, 80, 120, 60, 20]"
         fi
+        
         if [ "${RUN_SPIKE}" = "true" ]; then
           render_test "spike" "Spike" 400 "[5, 50, 200, 400, 200, 50, 10]"
         fi
 
-        # -------- EXECUTIVE SUMMARY WITH REAL NUMBERS --------
-        echo "### 📝 Executive Summary with Key Numbers" >> $GITHUB_STEP_SUMMARY
-        echo "" >> $GITHUB_STEP_SUMMARY
-        echo "**Tests Executed:** ${{ github.event.inputs.test_type }}" >> $GITHUB_STEP_SUMMARY
+        # Executive Summary
+        echo "### 📝 Executive Summary" >> $GITHUB_STEP_SUMMARY
         echo "" >> $GITHUB_STEP_SUMMARY
         
-        # Collect all critical metrics
-        SPIKE_FAILED_RATE=""
-        SPIKE_USER_EXPERIENCE=""
-        SPIKE_P95=""
-        PAGE_LOAD_SUCCESS=""
-        PRODUCT_LOAD_SUCCESS=""
-        
+        # Collect spike test metrics
         if [ -f "k6-spike-output.txt" ]; then
-          # Extract failure rate
+          # Check for critical failures
           if grep -q "❌ 'rate<0.10'" "k6-spike-output.txt"; then
-            SPIKE_FAILED_RATE=$(grep "❌ 'rate<0.10'" "k6-spike-output.txt" | sed "s/.*rate=//" | sed "s/%//")
-          fi
-          
-          # Extract user experience rate
-          if grep -q "❌ 'rate>0.85'" "k6-spike-output.txt"; then
-            SPIKE_USER_EXPERIENCE=$(grep "❌ 'rate>0.85'" "k6-spike-output.txt" | sed "s/.*rate=//" | sed "s/%//")
-          fi
-          
-          # Extract P95 response time
-          if grep -q "p(95)=" "k6-spike-output.txt"; then
-            SPIKE_P95=$(grep "http_req_duration.*p(95)=" "k6-spike-output.txt" | tail -1 | sed 's/.*p(95)=//' | awk '{print $1}')
-          fi
-          
-          # Extract page load metrics
-          if grep -q "page loaded during spike" "k6-spike-output.txt"; then
-            PAGE_LINE=$(grep -A1 "page loaded during spike" "k6-spike-output.txt" | tail -1)
-            PAGE_SUCCESS=$(echo "$PAGE_LINE" | grep -o "[0-9]\+ — ✅" | grep -o "[0-9]\+" || echo "0")
-            PAGE_FAIL=$(echo "$PAGE_LINE" | grep -o "[0-9]\+ / ❌" | grep -o "[0-9]\+" || echo "0")
-            PAGE_TOTAL=$((PAGE_SUCCESS + PAGE_FAIL))
-            if [ "$PAGE_TOTAL" -gt 0 ]; then
-              PAGE_LOAD_SUCCESS=$((PAGE_SUCCESS * 100 / PAGE_TOTAL))
-            fi
-          fi
-          
-          # Extract product load metrics
-          if grep -q "popular product loaded" "k6-spike-output.txt"; then
-            PRODUCT_LINE=$(grep -A1 "popular product loaded" "k6-spike-output.txt" | tail -1)
-            PRODUCT_SUCCESS=$(echo "$PRODUCT_LINE" | grep -o "[0-9]\+ — ✅" | grep -o "[0-9]\+" || echo "0")
-            PRODUCT_FAIL=$(echo "$PRODUCT_LINE" | grep -o "[0-9]\+ / ❌" | grep -o "[0-9]\+" || echo "0")
-            PRODUCT_TOTAL=$((PRODUCT_SUCCESS + PRODUCT_FAIL))
-            if [ "$PRODUCT_TOTAL" -gt 0 ]; then
-              PRODUCT_LOAD_SUCCESS=$((PRODUCT_SUCCESS * 100 / PRODUCT_TOTAL))
-            fi
-          fi
-        fi
-        
-        # Determine overall test status with numbers
-        OVERALL_STATUS="🟢 PASS"
-        STATUS_DETAILS=""
-        
-        if [ -n "$SPIKE_FAILED_RATE" ]; then
-          OVERALL_STATUS="🔴 CRITICAL FAILURE"
-          STATUS_DETAILS="Error rate during spike: ${SPIKE_FAILED_RATE}% (target: <10%)"
-        elif [ -n "$SPIKE_USER_EXPERIENCE" ]; then
-          OVERALL_STATUS="🟡 WARNING"
-          STATUS_DETAILS="User experience during spike: ${SPIKE_USER_EXPERIENCE}% (target: >85%)"
-        fi
-        
-        echo "### 🚨 Critical Metrics Summary" >> $GITHUB_STEP_SUMMARY
-        echo "" >> $GITHUB_STEP_SUMMARY
-        echo "**Overall Status:** $OVERALL_STATUS" >> $GITHUB_STEP_SUMMARY
-        if [ -n "$STATUS_DETAILS" ]; then
-          echo "**Primary Issue:** $STATUS_DETAILS" >> $GITHUB_STEP_SUMMARY
-        fi
-        echo "" >> $GITHUB_STEP_SUMMARY
-        
-        echo "**Key Performance Indicators:**" >> $GITHUB_STEP_SUMMARY
-        echo "" >> $GITHUB_STEP_SUMMARY
-        
-        # Display critical metrics
-        if [ -n "$SPIKE_FAILED_RATE" ]; then
-          echo "🔴 **Error Rate During Spike:** ${SPIKE_FAILED_RATE}% ❌" >> $GITHUB_STEP_SUMMARY
-          echo "   *Target:* <10% | *Dev Metric:* rate<0.10" >> $GITHUB_STEP_SUMMARY
-        fi
-        
-        if [ -n "$SPIKE_USER_EXPERIENCE" ]; then
-          echo "🔴 **User Experience During Spike:** ${SPIKE_USER_EXPERIENCE}% ❌" >> $GITHUB_STEP_SUMMARY
-          echo "   *Target:* >85% | *Dev Metric:* rate>0.85" >> $GITHUB_STEP_SUMMARY
-        fi
-        
-        if [ -n "$SPIKE_P95" ]; then
-          # Safely check if it's a number
-          if [[ "$SPIKE_P95" =~ ^[0-9]+(\.[0-9]+)?$ ]]; then
-            SPIKE_P95_NUM=${SPIKE_P95%%.*}
-            if [ "$SPIKE_P95_NUM" -lt 2000 ]; then
-              echo "🟢 **Response Time (P95):** ${SPIKE_P95}ms ✅" >> $GITHUB_STEP_SUMMARY
-              echo "   *Target:* <2000ms | *Dev Metric:* p(95)<2000" >> $GITHUB_STEP_SUMMARY
-            else
-              echo "🔴 **Response Time (P95):** ${SPIKE_P95}ms ❌" >> $GITHUB_STEP_SUMMARY
-              echo "   *Target:* <2000ms | *Dev Metric:* p(95)<2000" >> $GITHUB_STEP_SUMMARY
-            fi
-          else
-            echo "⚠️ **Response Time (P95):** ${SPIKE_P95}ms" >> $GITHUB_STEP_SUMMARY
-            echo "   *Target:* <2000ms | *Dev Metric:* p(95)<2000" >> $GITHUB_STEP_SUMMARY
-          fi
-        fi
-        
-        if [ -n "$PAGE_LOAD_SUCCESS" ]; then
-          if [ "$PAGE_LOAD_SUCCESS" -lt 90 ]; then
-            echo "🔴 **Page Load Success:** ${PAGE_LOAD_SUCCESS}% ❌" >> $GITHUB_STEP_SUMMARY
-            echo "   *Target:* >90% | *Test Metric:* page loaded during spike" >> $GITHUB_STEP_SUMMARY
-          fi
-        fi
-        
-        if [ -n "$PRODUCT_LOAD_SUCCESS" ]; then
-          if [ "$PRODUCT_LOAD_SUCCESS" -lt 90 ]; then
-            echo "🔴 **Product Page Success:** ${PRODUCT_LOAD_SUCCESS}% ❌" >> $GITHUB_STEP_SUMMARY
-            echo "   *Target:* >90% | *Test Metric:* popular product loaded" >> $GITHUB_STEP_SUMMARY
-          fi
-        fi
-        
-        echo "" >> $GITHUB_STEP_SUMMARY
-        
-        echo "**Recommendations for Developers & DevOps:**" >> $GITHUB_STEP_SUMMARY
-        echo "" >> $GITHUB_STEP_SUMMARY
-        
-        if [ "$OVERALL_STATUS" = "🔴 CRITICAL FAILURE" ]; then
-          echo "1. **🚨 IMMEDIATE ACTION REQUIRED**" >> $GITHUB_STEP_SUMMARY
-          echo "   - Fix error rate: Current ${SPIKE_FAILED_RATE}% → Target <10%" >> $GITHUB_STEP_SUMMARY
-          echo "   - Investigate: Check server logs, database connections, API endpoints" >> $GITHUB_STEP_SUMMARY
-          echo "   - Priority: High - Affects all users during traffic spikes" >> $GITHUB_STEP_SUMMARY
-          
-          if [ -n "$PAGE_LOAD_SUCCESS" ] && [ "$PAGE_LOAD_SUCCESS" -lt 50 ]; then
+            RATE=$(grep "❌ 'rate<0.10'" "k6-spike-output.txt" | sed 's/.*rate=//; s/%//' | tr -d ' ')
+            echo "### 🚨 CRITICAL ISSUE DETECTED" >> $GITHUB_STEP_SUMMARY
             echo "" >> $GITHUB_STEP_SUMMARY
-            echo "2. **PAGE LOAD CRISIS**" >> $GITHUB_STEP_SUMMARY
-            echo "   - Only ${PAGE_LOAD_SUCCESS}% of pages load during spikes" >> $GITHUB_STEP_SUMMARY
-            echo "   - Check: CDN, caching, static asset delivery" >> $GITHUB_STEP_SUMMARY
+            echo "**Problem:** System has ${RATE}% error rate during traffic spikes" >> $GITHUB_STEP_SUMMARY
+            echo "" >> $GITHUB_STEP_SUMMARY
+            echo "**What this means:**" >> $GITHUB_STEP_SUMMARY
+            echo "- During busy times, ${RATE}% of users get errors" >> $GITHUB_STEP_SUMMARY
+            echo "- Website becomes mostly unusable under load" >> $GITHUB_STEP_SUMMARY
+            echo "- Urgent fixes needed before promotions or events" >> $GITHUB_STEP_SUMMARY
+            echo "" >> $GITHUB_STEP_SUMMARY
+          elif grep -q "❌ 'rate>0.85'" "k6-spike-output.txt"; then
+            RATE=$(grep "❌ 'rate>0.85'" "k6-spike-output.txt" | sed 's/.*rate=//; s/%//' | tr -d ' ')
+            echo "### ⚠️ WARNING: User Experience Issues" >> $GITHUB_STEP_SUMMARY
+            echo "" >> $GITHUB_STEP_SUMMARY
+            echo "**Problem:** Only ${RATE}% of users had good experience during spike" >> $GITHUB_STEP_SUMMARY
+            echo "" >> $GITHUB_STEP_SUMMARY
           fi
-          
-          echo "" >> $GITHUB_STEP_SUMMARY
-          echo "3. **DO NOT DEPLOY** until spike test passes with:" >> $GITHUB_STEP_SUMMARY
-          echo "   - Error rate < 10% (current: ${SPIKE_FAILED_RATE}%)" >> $GITHUB_STEP_SUMMARY
-          echo "   - User experience > 85% (if applicable)" >> $GITHUB_STEP_SUMMARY
-          echo "   - P95 response time < 2000ms" >> $GITHUB_STEP_SUMMARY
-          
-        elif [ "$OVERALL_STATUS" = "🟡 WARNING" ]; then
-          echo "1. **ADDRESS SOON**" >> $GITHUB_STEP_SUMMARY
-          echo "   - Improve user experience: Current ${SPIKE_USER_EXPERIENCE}% → Target >85%" >> $GITHUB_STEP_SUMMARY
-          echo "   - Investigate: Response time consistency, resource utilization" >> $GITHUB_STEP_SUMMARY
-          echo "   - Priority: Medium - Affects user satisfaction during peak times" >> $GITHUB_STEP_SUMMARY
-          
-          echo "" >> $GITHUB_STEP_SUMMARY
-          echo "2. **MONITORING RECOMMENDED**" >> $GITHUB_STEP_SUMMARY
-          echo "   - Watch response time percentiles in production" >> $GITHUB_STEP_SUMMARY
-          echo "   - Plan scaling if user load exceeds 400 concurrent users" >> $GITHUB_STEP_SUMMARY
-          echo "   - Consider: Load balancer optimization, database indexing" >> $GITHUB_STEP_SUMMARY
-          
+        fi
+        
+        echo "**Overall Status:**" >> $GITHUB_STEP_SUMMARY
+        if [ -f "k6-spike-output.txt" ] && grep -q "❌" "k6-spike-output.txt"; then
+          if grep -q "❌ 'rate<0.10'" "k6-spike-output.txt"; then
+            echo "🔴 CRITICAL FAILURE" >> $GITHUB_STEP_SUMMARY
+          else
+            echo "🟡 WARNING" >> $GITHUB_STEP_SUMMARY
+          fi
         else
-          echo "1. **PERFORMANCE IS GOOD**" >> $GITHUB_STEP_SUMMARY
-          if [ -n "$SPIKE_P95" ]; then
-            echo "   - Response time: ${SPIKE_P95}ms (excellent)" >> $GITHUB_STEP_SUMMARY
-          fi
-          echo "   - All thresholds passed" >> $GITHUB_STEP_SUMMARY
-          echo "   - System handles tested load patterns well" >> $GITHUB_STEP_SUMMARY
-          
-          echo "" >> $GITHUB_STEP_SUMMARY
-          echo "2. **CONTINUE MONITORING**" >> $GITHUB_STEP_SUMMARY
-          echo "   - Regular performance testing recommended" >> $GITHUB_STEP_SUMMARY
-          echo "   - Alert on P95 > 1500ms in production" >> $GITHUB_STEP_SUMMARY
-          echo "   - Plan for scale beyond 400 concurrent users" >> $GITHUB_STEP_SUMMARY
+          echo "🟢 PASS" >> $GITHUB_STEP_SUMMARY
+        fi
+        echo "" >> $GITHUB_STEP_SUMMARY
+        
+        echo "**Recommendations:**" >> $GITHUB_STEP_SUMMARY
+        echo "" >> $GITHUB_STEP_SUMMARY
+        
+        if [ -f "k6-spike-output.txt" ] && grep -q "❌ 'rate<0.10'" "k6-spike-output.txt"; then
+          RATE=$(grep "❌ 'rate<0.10'" "k6-spike-output.txt" | sed 's/.*rate=//; s/%//' | tr -d ' ')
+          echo "1. 🚨 IMMEDIATE ACTION: Fix error rate (current: ${RATE}%, target: <10%)" >> $GITHUB_STEP_SUMMARY
+          echo "2. Investigate: Check server logs and database connections" >> $GITHUB_STEP_SUMMARY
+          echo "3. Do not deploy until spike tests pass" >> $GITHUB_STEP_SUMMARY
+        elif [ -f "k6-spike-output.txt" ] && grep -q "❌ 'rate>0.85'" "k6-spike-output.txt"; then
+          RATE=$(grep "❌ 'rate>0.85'" "k6-spike-output.txt" | sed 's/.*rate=//; s/%//' | tr -d ' ')
+          echo "1. Address soon: Improve user experience (current: ${RATE}%, target: >85%)" >> $GITHUB_STEP_SUMMARY
+          echo "2. Monitor response times in production" >> $GITHUB_STEP_SUMMARY
+          echo "3. Consider scaling for traffic spikes" >> $GITHUB_STEP_SUMMARY
+        else
+          echo "1. Performance is good under tested conditions" >> $GITHUB_STEP_SUMMARY
+          echo "2. Continue regular performance testing" >> $GITHUB_STEP_SUMMARY
+          echo "3. Monitor production metrics" >> $GITHUB_STEP_SUMMARY
         fi
         
         echo "" >> $GITHUB_STEP_SUMMARY
         echo "**What to tell stakeholders:**" >> $GITHUB_STEP_SUMMARY
         echo "" >> $GITHUB_STEP_SUMMARY
         
-        if [ "$OVERALL_STATUS" = "🔴 CRITICAL FAILURE" ]; then
-          echo "> 'The website crashes during busy periods with ${SPIKE_FAILED_RATE}% error rate. We need to fix this urgently before any promotions or events, otherwise ${SPIKE_FAILED_RATE}% of customers will get errors.'" >> $GITHUB_STEP_SUMMARY
-        elif [ "$OVERALL_STATUS" = "🟡 WARNING" ]; then
-          echo "> 'The website works but only ${SPIKE_USER_EXPERIENCE}% of users have a good experience during peak times (target: 85%+). We should improve this before it affects customer satisfaction.'" >> $GITHUB_STEP_SUMMARY
+        if [ -f "k6-spike-output.txt" ] && grep -q "❌ 'rate<0.10'" "k6-spike-output.txt"; then
+          RATE=$(grep "❌ 'rate<0.10'" "k6-spike-output.txt" | sed 's/.*rate=//; s/%//' | tr -d ' ')
+          echo "> 'The website crashes during busy periods with ${RATE}% error rate. We need to fix this urgently.'" >> $GITHUB_STEP_SUMMARY
+        elif [ -f "k6-spike-output.txt" ] && grep -q "❌ 'rate>0.85'" "k6-spike-output.txt"; then
+          RATE=$(grep "❌ 'rate>0.85'" "k6-spike-output.txt" | sed 's/.*rate=//; s/%//' | tr -d ' ')
+          echo "> 'The website works but only ${RATE}% of users have good experience during peak times.'" >> $GITHUB_STEP_SUMMARY
         else
-          if [ -n "$SPIKE_P95" ]; then
-            echo "> 'Performance is good under normal conditions. The site is fast (${SPIKE_P95}ms response time) and stable for typical usage patterns up to 400 concurrent users.'" >> $GITHUB_STEP_SUMMARY
-          else
-            echo "> 'Performance is good under normal conditions. The site is stable for typical usage patterns.'" >> $GITHUB_STEP_SUMMARY
-          fi
+          echo "> 'Performance is good under normal conditions. The site is stable for typical usage.'" >> $GITHUB_STEP_SUMMARY
         fi
-        
-        echo "" >> $GITHUB_STEP_SUMMARY
-        echo "**Technical Contact:** Developers & DevOps team should review the detailed metrics above." >> $GITHUB_STEP_SUMMARY
