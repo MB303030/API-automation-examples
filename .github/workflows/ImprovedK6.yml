@@ -4,9 +4,9 @@ on:
   workflow_dispatch:
     inputs:
       test_type:
-        description: 'Select which performance test to run'
+        description: Select which performance test to run
         required: true
-        default: 'all'
+        default: all
         type: choice
         options:
           - all
@@ -15,108 +15,110 @@ on:
           - spike
 
 jobs:
-  test:
+  k6:
     runs-on: ubuntu-latest
 
     steps:
-    - uses: actions/checkout@v4
+    - name: Checkout repository
+      uses: actions/checkout@v4
 
-    # ----------------------------------------------------
+    # -----------------------------
     # Decide which tests to run
-    # ----------------------------------------------------
-    - name: Determine which tests to run
+    # -----------------------------
+    - name: Select tests
       run: |
-        TEST_TYPE="${{ github.event.inputs.test_type }}"
+        case "${{ github.event.inputs.test_type }}" in
+          smoke)
+            echo "RUN_SMOKE=true" >> $GITHUB_ENV
+            ;;
+          load)
+            echo "RUN_LOAD=true" >> $GITHUB_ENV
+            ;;
+          spike)
+            echo "RUN_SPIKE=true" >> $GITHUB_ENV
+            ;;
+          all)
+            echo "RUN_SMOKE=true" >> $GITHUB_ENV
+            echo "RUN_LOAD=true"  >> $GITHUB_ENV
+            echo "RUN_SPIKE=true" >> $GITHUB_ENV
+            ;;
+        esac
 
-        if [ "$TEST_TYPE" = "smoke" ]; then
-          echo "RUN_SMOKE=true" >> $GITHUB_ENV
-          echo "RUN_LOAD=false" >> $GITHUB_ENV
-          echo "RUN_SPIKE=false" >> $GITHUB_ENV
-        elif [ "$TEST_TYPE" = "load" ]; then
-          echo "RUN_SMOKE=false" >> $GITHUB_ENV
-          echo "RUN_LOAD=true" >> $GITHUB_ENV
-          echo "RUN_SPIKE=false" >> $GITHUB_ENV
-        elif [ "$TEST_TYPE" = "spike" ]; then
-          echo "RUN_SMOKE=false" >> $GITHUB_ENV
-          echo "RUN_LOAD=false" >> $GITHUB_ENV
-          echo "RUN_SPIKE=true" >> $GITHUB_ENV
-        else
-          echo "RUN_SMOKE=true" >> $GITHUB_ENV
-          echo "RUN_LOAD=true" >> $GITHUB_ENV
-          echo "RUN_SPIKE=true" >> $GITHUB_ENV
-        fi
-
-    # ----------------------------------------------------
-    # Run selected tests (NO DUPLICATION)
-    # ----------------------------------------------------
-    - name: Run Selected Performance Tests
+    # -----------------------------
+    # Run selected k6 tests
+    # -----------------------------
+    - name: Run k6 tests
       run: |
         declare -A TESTS=(
-          ["smoke"]="tests/performance/smoke/dummyjson-smoke.js"
-          ["load"]="tests/performance/load/dummyjson-load.js"
-          ["spike"]="tests/performance/spike/dummyjson-spike.js"
+          [smoke]=tests/performance/smoke/dummyjson-smoke.js
+          [load]=tests/performance/load/dummyjson-load.js
+          [spike]=tests/performance/spike/dummyjson-spike.js
         )
 
         for TEST in smoke load spike; do
-          RUN_VAR="RUN_${TEST^^}"
-          if [ "${!RUN_VAR}" = "true" ]; then
-            echo "🚀 Running ${TEST^} test..."
-            docker run --rm -v $PWD:/scripts -w /scripts grafana/k6 \
-              run "${TESTS[$TEST]}" 2>&1 | tee "k6-${TEST}-output.txt"
-            echo "✅ ${TEST^} test completed"
+          VAR="RUN_${TEST^^}"
+          if [ "${!VAR}" = "true" ]; then
+            echo "🚀 Running $TEST test"
+            docker run --rm \
+              -v "$PWD:/scripts" \
+              -w /scripts \
+              grafana/k6 run "${TESTS[$TEST]}" \
+              2>&1 | tee "k6-$TEST-output.txt"
+            echo "✅ $TEST completed"
           fi
         done
 
-    # ----------------------------------------------------
-    # Report: GRAPH + METRICS PER TEST (FIXED)
-    # ----------------------------------------------------
-    - name: Create Performance Report
+    # -----------------------------
+    # Generate GitHub Summary
+    # -----------------------------
+    - name: Generate Performance Report
       run: |
         echo "## 🧪 K6 Performance Test Report" >> $GITHUB_STEP_SUMMARY
         echo "" >> $GITHUB_STEP_SUMMARY
 
         render_test () {
-          NAME=$1
+          KEY=$1
           TITLE=$2
           MAX_VUS=$3
-          LINE=$4
-          FILE="k6-${NAME}-output.txt"
+          LINE_DATA=$4
+          FILE="k6-$KEY-output.txt"
 
-          if [ -f "$FILE" ]; then
-            echo "### 🚦 ${TITLE} Test" >> $GITHUB_STEP_SUMMARY
-            echo "" >> $GITHUB_STEP_SUMMARY
+          [ ! -f "$FILE" ] && return
 
-            # -------- GRAPH --------
-            echo "#### 📈 Load Pattern" >> $GITHUB_STEP_SUMMARY
-            echo '```mermaid' >> $GITHUB_STEP_SUMMARY
-            echo 'xychart-beta' >> $GITHUB_STEP_SUMMARY
-            echo "    title \"${TITLE} Test Load Pattern\"" >> $GITHUB_STEP_SUMMARY
-            echo '    x-axis "Time"' >> $GITHUB_STEP_SUMMARY
-            echo "    y-axis \"Virtual Users\" 0 --> ${MAX_VUS}" >> $GITHUB_STEP_SUMMARY
-            echo "    line ${LINE}" >> $GITHUB_STEP_SUMMARY
-            echo '```' >> $GITHUB_STEP_SUMMARY
-            echo "" >> $GITHUB_STEP_SUMMARY
+          echo "### 🚦 $TITLE Test" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
 
-            # -------- METRICS --------
-            echo "#### 📊 Key Metrics" >> $GITHUB_STEP_SUMMARY
-            echo '```' >> $GITHUB_STEP_SUMMARY
-            grep -E "iterations|http_reqs|http_req_duration|http_req_failed" "$FILE" | tail -n 20 >> $GITHUB_STEP_SUMMARY
-            echo '```' >> $GITHUB_STEP_SUMMARY
+          # ----- GRAPH -----
+          echo "#### 📈 Load Pattern" >> $GITHUB_STEP_SUMMARY
+          echo '```mermaid' >> $GITHUB_STEP_SUMMARY
+          echo 'xychart-beta' >> $GITHUB_STEP_SUMMARY
+          echo "    title \"$TITLE Test Load Pattern\"" >> $GITHUB_STEP_SUMMARY
+          echo '    x-axis "Time"' >> $GITHUB_STEP_SUMMARY
+          echo "    y-axis \"Virtual Users\" 0 --> $MAX_VUS" >> $GITHUB_STEP_SUMMARY
+          echo "    line $LINE_DATA" >> $GITHUB_STEP_SUMMARY
+          echo '```' >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
 
-            # -------- RAW OUTPUT --------
-            echo "<details>" >> $GITHUB_STEP_SUMMARY
-            echo "<summary>View raw ${TITLE} output</summary>" >> $GITHUB_STEP_SUMMARY
-            echo '```' >> $GITHUB_STEP_SUMMARY
-            tail -40 "$FILE" >> $GITHUB_STEP_SUMMARY
-            echo '```' >> $GITHUB_STEP_SUMMARY
-            echo "</details>" >> $GITHUB_STEP_SUMMARY
-            echo "---" >> $GITHUB_STEP_SUMMARY
-          fi
+          # ----- METRICS -----
+          echo "#### 📊 Key Metrics" >> $GITHUB_STEP_SUMMARY
+          echo '```' >> $GITHUB_STEP_SUMMARY
+          grep -E "iterations|http_reqs|http_req_duration|http_req_failed" "$FILE" | tail -20 >> $GITHUB_STEP_SUMMARY
+          echo '```' >> $GITHUB_STEP_SUMMARY
+
+          # ----- RAW OUTPUT -----
+          echo "<details>" >> $GITHUB_STEP_SUMMARY
+          echo "<summary>View raw $TITLE output</summary>" >> $GITHUB_STEP_SUMMARY
+          echo '```' >> $GITHUB_STEP_SUMMARY
+          tail -40 "$FILE" >> $GITHUB_STEP_SUMMARY
+          echo '```' >> $GITHUB_STEP_SUMMARY
+          echo "</details>" >> $GITHUB_STEP_SUMMARY
+
+          echo "---" >> $GITHUB_STEP_SUMMARY
         }
 
-        [ "${RUN_SMOKE}" = "true" ] && render_test "smoke" "Smoke" 5 "[1, 3, 5, 0]"
-        [ "${RUN_LOAD}" = "true" ] && render_test "load" "Load" 120 "[10, 30, 80, 120, 60, 20]"
-        [ "${RUN_SPIKE}" = "true" ] && render_test "spike" "Spike" 400 "[5, 50, 200, 400, 200, 50, 10]"
+        [ "$RUN_SMOKE" = "true" ] && render_test smoke Smoke 5   "[1,3,5,0]"
+        [ "$RUN_LOAD"  = "true" ] && render_test load  Load  120 "[10,30,80,120,60,20]"
+        [ "$RUN_SPIKE" = "true" ] && render_test spike Spike 400 "[5,50,200,400,200,50,10]"
 
         echo "*Generated at: $(date)*" >> $GITHUB_STEP_SUMMARY
         echo "*Selected test type: ${{ github.event.inputs.test_type }}*" >> $GITHUB_STEP_SUMMARY
