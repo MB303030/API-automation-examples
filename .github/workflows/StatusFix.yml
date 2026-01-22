@@ -1,4 +1,4 @@
-name: API CI Tests
+name: MetricFIx
 
 on:
   workflow_dispatch:  # Only manual trigger
