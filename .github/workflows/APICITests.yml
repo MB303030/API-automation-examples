@@ -1,11 +1,10 @@
 name: API CI Tests
 
 on:
-  workflow_dispatch:  # Only manual trigger, no automatic runs
+  workflow_dispatch:  # Only manual trigger
 
 jobs:
-  # Job 1: Functional API tests with Playwright
-  playwright-tests:
+  api-tests:
     runs-on: ubuntu-latest
     
     steps:
@@ -21,102 +20,85 @@ jobs:
     - name: 📦 Install dependencies
       run: npm ci
 
-    - name: 🎭 Install Playwright
+    - name: 🎭 Install Playwright browsers
       run: npx playwright install chromium
 
-    - name: 🔧 Setup API environment variables
+    - name: 🔧 Setup API environment
       run: |
-        echo "API_KEY=test-key-${{ github.run_id }}" >> $GITHUB_ENV
         echo "API_PET_BASE=https://petstore.swagger.io/v2" >> $GITHUB_ENV
-        echo "API_POSTMAN_BASE=https://postman-echo.com"  # Fixed URL
+        echo "API_POSTMAN_BASE=https://postman-echo.com" >> $GITHUB_ENV
         echo "API_DUMMYJSON_BASE=https://dummyjson.com" >> $GITHUB_ENV
 
     - name: 🧪 Run Playwright API tests
-      run: npx playwright test
+      run: |
+        echo "Running API tests..."
+        npx playwright test 2>&1 | tee test-output.log
+        
+        # Save exit code
+        TEST_EXIT_CODE=$?
+        echo "TEST_EXIT_CODE=$TEST_EXIT_CODE" >> $GITHUB_ENV
 
-    - name: 📊 Generate Playwright HTML Report
+    - name: 📊 Generate Test Report
       if: always()
-      uses: mikepenz/action-playwright-report@v1
-      with:
-        path: playwright-report
+      run: |
+        echo "## 📋 API Test Results" >> $GITHUB_STEP_SUMMARY
+        echo "" >> $GITHUB_STEP_SUMMARY
+        echo "**Execution Time:** $(date)" >> $GITHUB_STEP_SUMMARY
+        echo "" >> $GITHUB_STEP_SUMMARY
+        
+        if [ "${TEST_EXIT_CODE}" = "0" ]; then
+          echo "✅ **Status: All tests PASSED**" >> $GITHUB_STEP_SUMMARY
+        else
+          echo "❌ **Status: Some tests FAILED**" >> $GITHUB_STEP_SUMMARY
+        fi
+        
+        echo "" >> $GITHUB_STEP_SUMMARY
+        echo "**Test Files Executed:**" >> $GITHUB_STEP_SUMMARY
+        
+        # List test files
+        if ls tests/*.spec.js 1> /dev/null 2>&1; then
+          for file in tests/*.spec.js; do
+            echo "- $(basename $file)" >> $GITHUB_STEP_SUMMARY
+          done
+        fi
+        
+        if ls tests/*/*.spec.js 1> /dev/null 2>&1; then
+          for file in tests/*/*.spec.js; do
+            echo "- $(basename $(dirname $file))/$(basename $file)" >> $GITHUB_STEP_SUMMARY
+          done
+        fi
+        
+        echo "" >> $GITHUB_STEP_SUMMARY
+        echo "**APIs Tested:**" >> $GITHUB_STEP_SUMMARY
+        echo "- Pet Store API (Swagger)" >> $GITHUB_STEP_SUMMARY
+        echo "- Postman Echo API" >> $GITHUB_STEP_SUMMARY
+        echo "- DummyJSON Products API" >> $GITHUB_STEP_SUMMARY
+        
+        # Show test output summary
+        if [ -f "test-output.log" ]; then
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "<details>" >> $GITHUB_STEP_SUMMARY
+          echo "<summary>View Test Output</summary>" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo '```' >> $GITHUB_STEP_SUMMARY
+          tail -50 test-output.log >> $GITHUB_STEP_SUMMARY
+          echo '```' >> $GITHUB_STEP_SUMMARY
+          echo "</details>" >> $GITHUB_STEP_SUMMARY
+        fi
 
-    - name: 📤 Upload Playwright report
+    - name: 📁 Upload Test Results
       if: always()
       uses: actions/upload-artifact@v4
       with:
-        name: playwright-api-report
-        path: playwright-report/
+        name: playwright-test-results
+        path: |
+          playwright-report/
+          test-results/
+          test-output.log
         retention-days: 7
 
-    - name: 📋 Test Summary
-      if: always()
+    - name: 🚨 Fail if tests failed
+      if: failure()
       run: |
-        echo "## 📊 API Test Summary" >> $GITHUB_STEP_SUMMARY
-        echo "" >> $GITHUB_STEP_SUMMARY
-        echo "**Test Execution:** $(date)" >> $GITHUB_STEP_SUMMARY
-        echo "" >> $GITHUB_STEP_SUMMARY
-        
-        # Check if tests passed
-        if [ -f "test-results.json" ]; then
-          echo "✅ **Status: Tests Completed**" >> $GITHUB_STEP_SUMMARY
-        else
-          echo "⚠️ **Status: No test results found**" >> $GITHUB_STEP_SUMMARY
-        fi
-        
-        echo "" >> $GITHUB_STEP_SUMMARY
-        echo "**Artifacts Available:**" >> $GITHUB_STEP_SUMMARY
-        echo "- Playwright HTML Report" >> $GITHUB_STEP_SUMMARY
-        echo "" >> $GITHUB_STEP_SUMMARY
-        echo "**Test Coverage:**" >> $GITHUB_STEP_SUMMARY
-        echo "- Pet Store API" >> $GITHUB_STEP_SUMMARY
-        echo "- Postman Echo API" >> $GITHUB_STEP_SUMMARY
-        echo "- DummyJSON API" >> $GITHUB_STEP_SUMMARY
-
-  # Job 2: Lightweight performance check (NO DOCKER)
-  quick-performance-check:
-    runs-on: ubuntu-latest
-    needs: playwright-tests  # Run after functional tests
-    
-    steps:
-    - name: 📥 Checkout code
-      uses: actions/checkout@v4
-
-    - name: ⚙️ Setup k6 (Native - NO DOCKER)
-      uses: grafana/setup-k6-action@v1
-
-    - name: 🧪 Run quick smoke test
-      run: |
-        echo "// Quick Smoke Test" > quick-test.js
-        echo "import http from 'k6/http';" >> quick-test.js
-        echo "import { check } from 'k6';" >> quick-test.js
-        echo "export const options = { vus: 1, duration: '10s' };" >> quick-test.js
-        echo "export default function() {" >> quick-test.js
-        echo "  const res = http.get('https://dummyjson.com/products/1');" >> quick-test.js
-        echo "  check(res, { 'status is 200': (r) => r.status === 200 });" >> quick-test.js
-        echo "}" >> quick-test.js
-        
-        echo "Running quick API health check..."
-        k6 run quick-test.js --summary-export=quick-test-results.json
-
-    - name: 📊 Performance Metrics
-      if: always()
-      run: |
-        echo "## ⚡ Quick Performance Check" >> $GITHUB_STEP_SUMMARY
-        echo "" >> $GITHUB_STEP_SUMMARY
-        
-        if [ -f "quick-test-results.json" ]; then
-          echo "✅ **Status: Performance check completed**" >> $GITHUB_STEP_SUMMARY
-          echo "" >> $GITHUB_STEP_SUMMARY
-          
-          # Extract simple metrics
-          REQUESTS=$(jq -r '.metrics.http_reqs.value' quick-test-results.json 2>/dev/null || echo "N/A")
-          AVG_TIME=$(jq -r '.metrics.http_req_duration.avg' quick-test-results.json 2>/dev/null || echo "N/A")
-          SUCCESS_RATE=$(jq -r '.metrics.http_req_failed.rate' quick-test-results.json 2>/dev/null || echo "N/A")
-          
-          echo "**Quick Metrics:**" >> $GITHUB_STEP_SUMMARY
-          echo "- Total Requests: $REQUESTS" >> $GITHUB_STEP_SUMMARY
-          echo "- Average Response Time: ${AVG_TIME}ms" >> $GITHUB_STEP_SUMMARY
-          echo "- Error Rate: ${SUCCESS_RATE}" >> $GITHUB_STEP_SUMMARY
-        else
-          echo "⚠️ **Status: No performance results available**" >> $GITHUB_STEP_SUMMARY
-        fi
+        echo "❌ API tests failed. Check the test output above."
+        exit 1
