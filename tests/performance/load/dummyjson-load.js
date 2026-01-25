@@ -79,7 +79,7 @@ function searchProducts() {
 
   check(response, {
     'search status 200': hasStatus(200),
-    'search has results': hasArrayWithItems('products'),
+    'search has results': hasArray('products'),
   });
 }
 
@@ -100,7 +100,7 @@ export default function () {
       break;
   }
 
-  // Think time: 2-5 seconds
-  const thinkTime = randomInt(2, 5) + Math.random();
+  // Think time: 2-5 seconds (uniform distribution)
+  const thinkTime = 2 + Math.random() * 3;
   sleep(thinkTime);
 }
