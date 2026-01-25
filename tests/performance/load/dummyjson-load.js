@@ -37,7 +37,7 @@ export default function () {
         try {
           const body = JSON.parse(r.body);
           return Array.isArray(body.products);
-        } catch {
+        } catch (e) {
           return false;
         }
       }
@@ -57,7 +57,7 @@ export default function () {
         try {
           const body = JSON.parse(r.body);
           return body.id && body.title && body.price;
-        } catch {
+        } catch (e) {
           return false;
         }
       }
@@ -78,7 +78,7 @@ export default function () {
         try {
           const body = JSON.parse(r.body);
           return body.products && body.products.length > 0;
-        } catch {
+        } catch (e) {
           return false;
         }
       }
