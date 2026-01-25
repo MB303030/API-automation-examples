@@ -101,36 +101,14 @@ export function allOf(...checks) {
 }
 
 /**
- * Create standard API checks object for K6
- * @param {string} name - Endpoint name for check labels
- * @param {Object} options - Check options
+ * Build checks object with common patterns
+ * Note: K6's JS runtime doesn't support spread in object literals,
+ * so this returns an object that should be used directly (not spread).
+ * @param {Object} checksMap - Map of check name to check function
  * @returns {Object} K6 checks object
  */
-export function createApiChecks(name, options = {}) {
-  const {
-    maxDuration = 1000,
-    requiredFields = [],
-    arrayProperty = null,
-    requireArrayItems = false,
-  } = options;
-
-  const checks = {
-    [`${name} - status 200`]: hasStatus(200),
-    [`${name} - response < ${maxDuration}ms`]: responseUnder(maxDuration),
-  };
-
-  if (requiredFields.length > 0) {
-    checks[`${name} - has required fields`] = hasRequiredFields(requiredFields);
-  }
-
-  if (arrayProperty) {
-    const arrayCheck = requireArrayItems 
-      ? hasArrayWithItems(arrayProperty) 
-      : hasArray(arrayProperty);
-    checks[`${name} - has ${arrayProperty} array`] = arrayCheck;
-  }
-
-  return checks;
+export function buildChecks(checksMap) {
+  return checksMap;
 }
 
 /**
