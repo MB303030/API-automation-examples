@@ -7,6 +7,16 @@ import {
   searchProductsEndpoint
 } from '../../../utils/config/endpoints.js';
 
+import {
+  hasStatus,
+  hasArray,
+  hasArrayWithItems,
+  hasRequiredFields,
+  weightedRandom,
+  randomFrom,
+  randomInt,
+} from '../../../utils/core/k6-helpers.js';
+
 const trafficData = JSON.parse(
   open('../../../test-data/trafficPatterns.json')
 );
@@ -16,75 +26,81 @@ export const options = {
   thresholds: {
     http_req_duration: trafficData.thresholds.load.http_req_duration,
     http_req_failed: trafficData.thresholds.load.http_req_failed,
-    http_reqs: ['rate>100'],
-    checks: ['rate>0.99']
+    http_reqs: trafficData.thresholds.load.http_reqs,
+    checks: trafficData.thresholds.load.checks,
   }
 };
 
+// Test data
+const SEARCH_TERMS = ['phone', 'laptop', 'shirt', 'watch', 'book', 'shoe', 'jacket'];
+const PRODUCT_REQUIRED_FIELDS = ['id', 'title', 'price'];
+
+// Scenario weights (must sum to 100)
+const SCENARIO_WEIGHTS = {
+  browse: 60,   // Product browsing
+  detail: 25,   // Product detail view
+  search: 15,   // Product search (adjusted from 10 to fill 100%)
+};
+
+// Scenario handlers
+function browseProducts() {
+  const limit = randomInt(1, 20);
+  const skip = randomInt(0, 100);
+
+  const response = http.get(getProductsEndpoint(limit, skip), {
+    tags: { scenario: 'browse_products' },
+  });
+
+  check(response, {
+    'browse status 200': hasStatus(200),
+    'browse has products array': hasArray('products'),
+  });
+}
+
+function viewProductDetail() {
+  const productId = randomInt(1, 100);
+  
+  const response = http.get(getProductByIdEndpoint(productId), {
+    tags: { scenario: 'view_product' },
+  });
+
+  check(response, {
+    'product detail status 200': hasStatus(200),
+    'product has valid data': hasRequiredFields(PRODUCT_REQUIRED_FIELDS),
+  });
+}
+
+function searchProducts() {
+  const searchTerm = randomFrom(SEARCH_TERMS);
+  
+  const response = http.get(searchProductsEndpoint(searchTerm), {
+    tags: { scenario: 'search_products' },
+  });
+
+  check(response, {
+    'search status 200': hasStatus(200),
+    'search has results': hasArrayWithItems('products'),
+  });
+}
+
+// Main test function
 export default function () {
-  // REAL USER SCENARIO 1: Product Browsing (60% of users)
-  if (Math.random() < 0.6) {
-    const limit = Math.floor(Math.random() * 20) + 1;
-    const skip = Math.floor(Math.random() * 100);
+  // Select ONE scenario based on weighted probability
+  const scenario = weightedRandom(SCENARIO_WEIGHTS);
 
-    const productsResponse = http.get(getProductsEndpoint(limit, skip), {
-      tags: { scenario: 'browse_products' },
-    });
-
-    check(productsResponse, {
-      'browse status 200': (r) => r.status === 200,
-      'browse has products array': (r) => {
-        try {
-          const body = JSON.parse(r.body);
-          return Array.isArray(body.products);
-        } catch (e) {
-          return false;
-        }
-      }
-    });
+  switch (scenario) {
+    case 'browse':
+      browseProducts();
+      break;
+    case 'detail':
+      viewProductDetail();
+      break;
+    case 'search':
+      searchProducts();
+      break;
   }
 
-  // REAL USER SCENARIO 2: Product Detail View (25% of users)
-  if (Math.random() < 0.25) {
-    const productId = Math.floor(Math.random() * 100) + 1;
-    const productResponse = http.get(getProductByIdEndpoint(productId), {
-      tags: { scenario: 'view_product' },
-    });
-
-    check(productResponse, {
-      'product detail status 200': (r) => r.status === 200,
-      'product has valid data': (r) => {
-        try {
-          const body = JSON.parse(r.body);
-          return body.id && body.title && body.price;
-        } catch (e) {
-          return false;
-        }
-      }
-    });
-  }
-
-  // REAL USER SCENARIO 3: Product Search (10% of users)
-  if (Math.random() < 0.1) {
-    const searchTerms = ['phone', 'laptop', 'shirt', 'watch', 'book', 'shoe', 'jacket'];
-    const randomTerm = searchTerms[Math.floor(Math.random() * searchTerms.length)];
-    const searchResponse = http.get(searchProductsEndpoint(randomTerm), {
-      tags: { scenario: 'search_products' },
-    });
-
-    check(searchResponse, {
-      'search status 200': (r) => r.status === 200,
-      'search has results': (r) => {
-        try {
-          const body = JSON.parse(r.body);
-          return body.products && body.products.length > 0;
-        } catch (e) {
-          return false;
-        }
-      }
-    });
-  }
-
-  const thinkTime = Math.random() * 3 + 2;
+  // Think time: 2-5 seconds
+  const thinkTime = randomInt(2, 5) + Math.random();
   sleep(thinkTime);
 }

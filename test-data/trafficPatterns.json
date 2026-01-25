@@ -108,6 +108,12 @@
       "checks": ["rate>0.98"],
       "http_reqs": ["rate>50"]
     },
+    "load_light": {
+      "http_req_duration": ["p(95)<800", "p(99)<1500"],
+      "http_req_failed": ["rate<0.02"],
+      "checks": ["rate>0.95"],
+      "http_reqs": ["rate>5"]
+    },
     "stress": {
       "http_req_duration": ["p(95)<1500", "p(99)<3000"],
       "http_req_failed": ["rate<0.05"],
