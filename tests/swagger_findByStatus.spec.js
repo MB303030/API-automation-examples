@@ -21,29 +21,28 @@ test.describe('API verification example', () => {
     // Parse response JSON into an array of pet objects
     const pets = await response.json();
     expect(Array.isArray(pets)).toBe(true);
+    expect(pets.length).toBeGreaterThan(0);
 
     // Sanity-check: ensure the local fixture is an array as well
     expect(Array.isArray(findByStatusResponse)).toBe(true);
 
-    // Select a name from the fixture to search for in the live response
-    const fixtureName = findByStatusResponse[0]?.name;
-    expect(typeof fixtureName).toBe('string');
+    // Validate response structure matches fixture structure (not exact values)
+    // Since PetStore is a public sandbox API, data changes constantly
+    const samplePet = pets[0];
+    const fixturePet = findByStatusResponse[0];
 
-    // Extract all valid pet `name` values from the live response
-    const petNames = pets
-      .map(p => p?.name)
-      .filter(n => typeof n === 'string');
-
-    // Also extract category names in case the fixture name appears there
-    const categoryNames = pets
-      .map(p => p?.category?.name)
-      .filter(n => typeof n === 'string');
-
-    // Combine and deduplicate names for a single containment check
-    const allNames = Array.from(new Set([...petNames, ...categoryNames]));
-
-    // Assert the fixture name exists somewhere in the live response (order-independent)
-    expect(allNames).toContain(fixtureName);
+    // Validate that live response has the same structure as fixture
+    expect(samplePet).toHaveProperty('id');
+    expect(samplePet).toHaveProperty('name');
+    expect(samplePet).toHaveProperty('status');
+    
+    // Validate types match fixture structure
+    expect(typeof samplePet.id).toBe('number');
+    expect(typeof samplePet.name).toBe('string');
+    expect(typeof samplePet.status).toBe('string');
+    
+    // Validate status matches our query parameter
+    expect(samplePet.status).toBe('available');
   });
 
   test('GET /store/inventory with api key', async ({ request }) => {

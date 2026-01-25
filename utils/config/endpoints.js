@@ -19,15 +19,18 @@ export function storeInventoryEndpoint() {
 ───────────────────────────── */
 export function postmanInfoEndpoint() {
   // Use 'postman' or 'echo' (both are aliases in env.js)
-  return getApiUrl('postman', '/info');
+  // Postman Echo uses /post endpoint for POST requests
+  return getApiUrl('postman', '/post');
 }
 
 export function postmanInfoPutEndpoint(id = 1) {
-  return getApiUrl('postman', `/info?id=${encodeURIComponent(id)}`);
+  // Postman Echo uses /put endpoint for PUT requests
+  return getApiUrl('postman', `/put?id=${encodeURIComponent(id)}`);
 }
 
 export function postmanInfoDeleteEndpoint(id = 12345) {
-  return getApiUrl('postman', `/info?id=${encodeURIComponent(id)}`);
+  // Postman Echo uses /delete endpoint for DELETE requests
+  return getApiUrl('postman', `/delete?id=${encodeURIComponent(id)}`);
 }
 
 /* ─────────────────────────────
