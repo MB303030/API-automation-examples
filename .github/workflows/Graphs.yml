@@ -22,14 +22,14 @@ jobs:
           npm init -y
           npm install chart.js chartjs-node-canvas
 
-      - name: Run k6 test with custom metrics
+      - name: Run k6 test
         run: |
           k6 run tests/performance/custom-stress.js \
             --out json=k6-results.json \
             --summary-export=k6-summary.json \
             2>&1 | tee k6-output.txt
 
-      - name: Generate performance charts
+      - name: Generate performance charts (FIXED)
         run: |
           mkdir -p charts
 
@@ -39,80 +39,46 @@ jobs:
 
           (async () => {
             try {
-              const data = JSON.parse(fs.readFileSync('./k6-results.json', 'utf8'));
-              const metrics = data.metrics;
+              // ✅ USE SUMMARY FILE (valid JSON)
+              const summary = JSON.parse(
+                fs.readFileSync('./k6-summary.json', 'utf8')
+              );
 
-              async function createChart(config, filename) {
-                const chartJSNodeCanvas = new ChartJSNodeCanvas({
-                  width: 800,
-                  height: 500
-                });
-                const buffer = await chartJSNodeCanvas.renderToBuffer(config);
-                fs.writeFileSync(`./charts/${filename}`, buffer);
-              }
+              const http = summary.metrics.http_req_duration.values;
 
-              // Response time
-              if (metrics.http_req_duration?.values) {
-                const values = Object.values(metrics.http_req_duration.values).slice(0, 100);
-                await createChart({
-                  type: 'line',
-                  data: {
-                    labels: values.map((_, i) => i + 1),
-                    datasets: [{
-                      label: 'Response Time (ms)',
-                      data: values,
-                      borderColor: 'rgb(75, 192, 192)',
-                      tension: 0.1
-                    }]
+              const canvas = new ChartJSNodeCanvas({
+                width: 900,
+                height: 500
+              });
+
+              // -------------------------------
+              // p90 / p95 percentile chart
+              // -------------------------------
+              const image = await canvas.renderToBuffer({
+                type: 'bar',
+                data: {
+                  labels: ['p90', 'p95'],
+                  datasets: [{
+                    label: 'HTTP Request Duration (ms)',
+                    data: [http['p(90)'], http['p(95)']],
+                    backgroundColor: ['#36a2eb', '#ff6384']
+                  }]
+                },
+                options: {
+                  plugins: {
+                    title: {
+                      display: true,
+                      text: 'HTTP Latency Percentiles'
+                    }
                   }
-                }, 'response-times.png');
-              }
+                }
+              });
 
-              // Virtual users
-              if (metrics.vus?.values) {
-                const values = Object.values(metrics.vus.values).slice(0, 100);
-                await createChart({
-                  type: 'line',
-                  data: {
-                    labels: values.map((_, i) => i + 1),
-                    datasets: [{
-                      label: 'Virtual Users',
-                      data: values,
-                      borderColor: 'rgb(255, 159, 64)'
-                    }]
-                  }
-                }, 'virtual-users.png');
-              }
+              fs.writeFileSync('charts/http-percentiles.png', image);
 
-              // Custom metrics
-              const customMetrics = [
-                'browse_product_time',
-                'get_product_detail_time',
-                'critical_api_time'
-              ];
-
-              const datasets = customMetrics
-                .filter(m => metrics[m]?.values)
-                .map((m, i) => ({
-                  label: m,
-                  data: Object.values(metrics[m].values).slice(0, 50),
-                  borderColor: ['red', 'blue', 'orange'][i],
-                  tension: 0.1
-                }));
-
-              if (datasets.length) {
-                await createChart({
-                  type: 'line',
-                  data: {
-                    labels: datasets[0].data.map((_, i) => i + 1),
-                    datasets
-                  }
-                }, 'custom-metrics.png');
-              }
-
-              console.log('📊 Charts generated successfully');
+              console.log('✅ Percentile chart generated');
             } catch (err) {
-              console.error('Chart generation failed:', err);
+              console.error('❌ Chart generation failed:', err.message);
               process.exit(1);
             }
           })();
