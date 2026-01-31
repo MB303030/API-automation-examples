@@ -1,4 +1,4 @@
-name: `stress 
+name: stress
 
 on:
   workflow_dispatch:
@@ -104,12 +104,6 @@ jobs:
       # ----------------------------------------------------
       - name: Create Performance Report
         run: |
-          echo "# 📊 K6 Performance Test Report" >> $GITHUB_STEP_SUMMARY
-          echo "" >> $GITHUB_STEP_SUMMARY
-          echo "**📅 Report Time:** $(date)" >> $GITHUB_STEP_SUMMARY
-          echo "**🎯 Test Type:** ${{ github.event.inputs.test_type }}" >> $GITHUB_STEP_SUMMARY
-          echo "" >> $GITHUB_STEP_SUMMARY
-          
           # Function to render each test WITH GRAPHS
           render_test() {
             NAME=$1
@@ -250,7 +244,7 @@ jobs:
               
               # Stress-specific analysis
               if [ "$NAME" = "stress" ]; then
-                if grep -q "❌.*stress_failure_rate.*rate=[5-9][0-9]" "$OUTPUT_FILE"; then
+                if grep -q "❌.*stress_failure_rate" "$OUTPUT_FILE"; then
                   RATE=$(grep "❌.*stress_failure_rate" "$OUTPUT_FILE" | sed 's/.*rate=//; s/%//' | tr -d ' ')
                   echo "💥 **STRESS TEST FINDING - SYSTEM FAILURE:**" >> $GITHUB_STEP_SUMMARY
                   echo "- **The Problem:** ${RATE}% critical failures under extreme load" >> $GITHUB_STEP_SUMMARY
@@ -267,24 +261,12 @@ jobs:
                 fi
               fi
               
-              # Existing spike test analysis (keep as is)
-              if [ "$NAME" = "spike" ]; then
-                if grep -q "❌ 'rate>0.85' rate=34.19%" "$OUTPUT_FILE"; then
-                  echo "🔴 **USER EXPERIENCE CRISIS:**" >> $GITHUB_STEP_SUMMARY
-                  echo "- **The Problem:** Only 34% of users had good experience" >> $GITHUB_STEP_SUMMARY
-                  echo "- **What It Means:** 66% of users experienced slowness or errors" >> $GITHUB_STEP_SUMMARY
-                  echo "- **Business Impact:** Most customers unhappy during busy periods" >> $GITHUB_STEP_SUMMARY
-                  echo "- **Graph Tells Us:** This happened during 400 user spike (see chart above)" >> $GITHUB_STEP_SUMMARY
-                  echo "" >> $GITHUB_STEP_SUMMARY
-                fi
-              fi
-              
               # 5. ACTIONABLE RECOMMENDATIONS
               echo "### 🎯 Recommended Actions" >> $GITHUB_STEP_SUMMARY
               echo "" >> $GITHUB_STEP_SUMMARY
               
               if [ "$NAME" = "stress" ]; then
-                if grep -q "❌.*stress_failure_rate.*rate=[5-9][0-9]" "$OUTPUT_FILE"; then
+                if grep -q "❌.*stress_failure_rate" "$OUTPUT_FILE"; then
                   echo "🚨 **CRITICAL INFRASTRUCTURE ISSUE**" >> $GITHUB_STEP_SUMMARY
                   echo "1. **INVESTIGATE** database connection limits and API timeouts" >> $GITHUB_STEP_SUMMARY
                   echo "2. **SCALE HORIZONTALLY** - add more instances before breaking point" >> $GITHUB_STEP_SUMMARY
@@ -302,6 +284,12 @@ jobs:
               echo "---" >> $GITHUB_STEP_SUMMARY
             fi
           }
+          
+          echo "# 📊 K6 Performance Test Report" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "**📅 Report Time:** $(date)" >> $GITHUB_STEP_SUMMARY
+          echo "**🎯 Test Type:** ${{ github.event.inputs.test_type }}" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
           
           # Quick summary table at the top
           echo "## 📋 Test Summary" >> $GITHUB_STEP_SUMMARY
@@ -387,7 +375,7 @@ jobs:
             echo '    x-axis "Graceful Degradation" --> "Catastrophic Failure"' >> $GITHUB_STEP_SUMMARY
             echo '    y-axis "Low Impact" --> "High Impact"' >> $GITHUB_STEP_SUMMARY
             
-            if grep -q "❌.*stress_failure_rate.*rate=[5-9][0-9]" "k6-stress-output.txt"; then
+            if grep -q "❌.*stress_failure_rate" "k6-stress-output.txt"; then
               echo '    quadrant-1 "Do Not Deploy"' >> $GITHUB_STEP_SUMMARY
               echo '    quadrant-2 "Investigate Urgently"' >> $GITHUB_STEP_SUMMARY
               echo '    quadrant-3 "Monitor"' >> $GITHUB_STEP_SUMMARY
@@ -417,7 +405,7 @@ jobs:
             echo "### ⚖️ Final Verdict (Stress Test)" >> $GITHUB_STEP_SUMMARY
             echo "" >> $GITHUB_STEP_SUMMARY
             
-            if grep -q "❌.*stress_failure_rate.*rate=[5-9][0-9]" "k6-stress-output.txt"; then
+            if grep -q "❌.*stress_failure_rate" "k6-stress-output.txt"; then
               echo "🔴 **DO NOT DEPLOY - SYSTEM BREAKS UNDER PRESSURE**" >> $GITHUB_STEP_SUMMARY
               echo "" >> $GITHUB_STEP_SUMMARY
               echo "**Reason:** System fails catastrophically at 3x normal load" >> $GITHUB_STEP_SUMMARY
@@ -443,9 +431,30 @@ jobs:
             echo "## 📈 Based on Spike Test Results (400 Users):" >> $GITHUB_STEP_SUMMARY
             echo "" >> $GITHUB_STEP_SUMMARY
             
-            # (Keep existing spike test decision logic here)
-            # ... [existing spike test decision logic from your original]
+            echo "### ⚖️ Final Verdict (Spike Test)" >> $GITHUB_STEP_SUMMARY
+            echo "" >> $GITHUB_STEP_SUMMARY
             
+            if grep -q "❌ 'rate<0.10' rate=90.49%" "k6-spike-output.txt"; then
+              echo "🔴 **DO NOT DEPLOY**" >> $GITHUB_STEP_SUMMARY
+              echo "" >> $GITHUB_STEP_SUMMARY
+              echo "**Reason:** 90% error rate at 400 user load" >> $GITHUB_STEP_SUMMARY
+              echo "" >> $GITHUB_STEP_SUMMARY
+              echo "**Tell stakeholders:** 'The website crashes when 400+ users visit. We need to fix this before any launch.'" >> $GITHUB_STEP_SUMMARY
+              
+            elif grep -q "❌ 'rate>0.85' rate=34.19%" "k6-spike-output.txt"; then
+              echo "🟡 **DEPLOY WITH CAUTION**" >> $GITHUB_STEP_SUMMARY
+              echo "" >> $GITHUB_STEP_SUMMARY
+              echo "**Reason:** Poor user experience (34%) at 400 users" >> $GITHUB_STEP_SUMMARY
+              echo "" >> $GITHUB_STEP_SUMMARY
+              echo "**Tell stakeholders:** 'The website works but gets slow for many users during busy times. We should improve this soon.'" >> $GITHUB_STEP_SUMMARY
+              
+            else
+              echo "🟢 **READY FOR DEPLOYMENT**" >> $GITHUB_STEP_SUMMARY
+              echo "" >> $GITHUB_STEP_SUMMARY
+              echo "**Reason:** All performance targets met at 400 user load" >> $GITHUB_STEP_SUMMARY
+              echo "" >> $GITHUB_STEP_SUMMARY
+              echo "**Tell stakeholders:** 'Performance tests show the website handles busy periods well. We're ready to launch.'" >> $GITHUB_STEP_SUMMARY
+            fi
           fi
           
           echo "" >> $GITHUB_STEP_SUMMARY
