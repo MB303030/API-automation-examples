@@ -1,0 +1,119 @@
+name: k6 Performance with Graphs
+
+on:
+  workflow_dispatch:  # Manual trigger
+  push:
+    paths:
+      - 'tests/performance/**'  # Auto-run when test files change
+
+jobs:
+  run-test-and-create-graphs:
+    runs-on: ubuntu-latest
+    
+    steps:
+      # 1. Checkout code
+      - name: Checkout repository
+        uses: actions/checkout@v4
+      
+      # 2. Setup k6
+      - name: Setup k6
+        uses: grafana/setup-k6-action@v1
+      
+      # 3. Install chart generator
+      - name: Setup chart tools
+        run: |
+          npm install -g k6-to-image
+          npm install -g chart.js chartjs-node-canvas
+      
+      # 4. Run the custom k6 test with JSON output
+      - name: Run k6 test with custom metrics
+        run: |
+          k6 run tests/performance/custom-stress.js \
+            --out json=k6-results.json \
+            --summary-export=k6-summary.json \
+            2>&1 | tee k6-output.txt
+          
+          # Show quick summary
+          echo "=== TEST COMPLETE ==="
+          echo "Results saved to: k6-results.json"
+          echo "Custom metrics recorded: browse_product_time, get_product_detail_time, critical_api_time"
+      
+      # 5. Generate actual graphs from the data
+      - name: Generate performance charts
+        run: |
+          mkdir -p charts
+          
+          echo "📊 Generating response time chart..."
+          k6-to-image --input k6-results.json \
+                     --output charts/response-times.png \
+                     --metric http_req_duration \
+                     --title "Response Times (95th percentile: p95)"
+          
+          echo "📊 Generating virtual users chart..."
+          k6-to-image --input k6-results.json \
+                     --output charts/virtual-users.png \
+                     --metric vus \
+                     --title "Virtual Users Over Time"
+          
+          echo "📊 Generating custom metrics chart..."
+          k6-to-image --input k6-results.json \
+                     --output charts/custom-metrics.png \
+                     --metric browse_product_time \
+                     --title "Custom Metric: Product Browse Time"
+          
+          echo "📊 Generating error rate chart..."
+          k6-to-image --input k6-results.json \
+                     --output charts/error-rate.png \
+                     --metric http_req_failed \
+                     --title "Error Rate During Test"
+          
+          echo "✅ Charts generated:"
+          ls -la charts/
+      
+      # 6. Display graphs in GitHub summary
+      - name: Create test report with graphs
+        run: |
+          echo "# 📈 k6 Performance Test Results" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "**Test completed at:** $(date)" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          
+          # Show test summary
+          if [ -f "k6-output.txt" ]; then
+            echo "## 📋 Test Summary" >> $GITHUB_STEP_SUMMARY
+            echo '```' >> $GITHUB_STEP_SUMMARY
+            grep -A 5 "checks\|thresholds" k6-output.txt | head -10 >> $GITHUB_STEP_SUMMARY
+            echo '```' >> $GITHUB_STEP_SUMMARY
+            echo "" >> $GITHUB_STEP_SUMMARY
+          fi
+          
+          # Display the charts
+          echo "## 📊 Performance Charts" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          
+          echo "### Response Times" >> $GITHUB_STEP_SUMMARY
+          echo "![Response Times](attachment://response-times.png)" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          
+          echo "### Virtual Users" >> $GITHUB_STEP_SUMMARY
+          echo "![Virtual Users](attachment://virtual-users.png)" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          
+          echo "### Custom Metric: Browse Product Time" >> $GITHUB_STEP_SUMMARY
+          echo "![Custom Metric](attachment://custom-metrics.png)" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          
+          echo "---" >> $GITHUB_STEP_SUMMARY
+          echo "*Charts generated automatically from k6 test data*" >> $GITHUB_STEP_SUMMARY
+      
+      # 7. Save everything as artifacts
+      - name: Upload test artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: k6-performance-results
+          path: |
+            k6-results.json
+            k6-summary.json
+            k6-output.txt
+            charts/
+          retention-days: 30
