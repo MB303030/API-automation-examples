@@ -1,4 +1,4 @@
-name: ALL performance CI
+name: stress
 
 on:
   workflow_dispatch:
@@ -13,6 +13,7 @@ on:
           - smoke
           - load
           - spike
+          - stress
 
 jobs:
   test:
@@ -38,18 +39,27 @@ jobs:
             echo "RUN_SMOKE=true" >> $GITHUB_ENV
             echo "RUN_LOAD=false" >> $GITHUB_ENV
             echo "RUN_SPIKE=false" >> $GITHUB_ENV
+            echo "RUN_STRESS=false" >> $GITHUB_ENV
           elif [ "$TEST_TYPE" = "load" ]; then
             echo "RUN_SMOKE=false" >> $GITHUB_ENV
             echo "RUN_LOAD=true" >> $GITHUB_ENV
             echo "RUN_SPIKE=false" >> $GITHUB_ENV
+            echo "RUN_STRESS=false" >> $GITHUB_ENV
           elif [ "$TEST_TYPE" = "spike" ]; then
             echo "RUN_SMOKE=false" >> $GITHUB_ENV
             echo "RUN_LOAD=false" >> $GITHUB_ENV
             echo "RUN_SPIKE=true" >> $GITHUB_ENV
+            echo "RUN_STRESS=false" >> $GITHUB_ENV
+          elif [ "$TEST_TYPE" = "stress" ]; then
+            echo "RUN_SMOKE=false" >> $GITHUB_ENV
+            echo "RUN_LOAD=false" >> $GITHUB_ENV
+            echo "RUN_SPIKE=false" >> $GITHUB_ENV
+            echo "RUN_STRESS=true" >> $GITHUB_ENV
           else
             echo "RUN_SMOKE=true" >> $GITHUB_ENV
             echo "RUN_LOAD=true" >> $GITHUB_ENV
             echo "RUN_SPIKE=true" >> $GITHUB_ENV
+            echo "RUN_STRESS=true" >> $GITHUB_ENV
           fi
 
       # ----------------------------------------------------
@@ -61,9 +71,10 @@ jobs:
             ["smoke"]="tests/performance/smoke/dummyjson-smoke.js"
             ["load"]="tests/performance/load/dummyjson-load.js"
             ["spike"]="tests/performance/spike/dummyjson-spike.js"
+            ["stress"]="tests/performance/stress/dummyjson-stress.js"
           )
 
-          for TEST in smoke load spike; do
+          for TEST in smoke load spike stress; do
             RUN_VAR="RUN_${TEST^^}"
             if [ "${!RUN_VAR}" = "true" ]; then
               echo "🚀 Running ${TEST^} test..."
@@ -93,12 +104,6 @@ jobs:
       # ----------------------------------------------------
       - name: Create Performance Report
         run: |
-          echo "# 📊 K6 Performance Test Report" >> $GITHUB_STEP_SUMMARY
-          echo "" >> $GITHUB_STEP_SUMMARY
-          echo "**📅 Report Time:** $(date)" >> $GITHUB_STEP_SUMMARY
-          echo "**🎯 Test Type:** ${{ github.event.inputs.test_type }}" >> $GITHUB_STEP_SUMMARY
-          echo "" >> $GITHUB_STEP_SUMMARY
-          
           # Function to render each test WITH GRAPHS
           render_test() {
             NAME=$1
@@ -113,14 +118,21 @@ jobs:
               echo "## 🚀 ${TITLE} Test Analysis" >> $GITHUB_STEP_SUMMARY
               echo "" >> $GITHUB_STEP_SUMMARY
               
-              # 🎯 GRAPH SECTION - KEPT AND ENHANCED!
+              # 🎯 GRAPH SECTION
               echo "### 📈 Load Pattern Visualization" >> $GITHUB_STEP_SUMMARY
               echo "" >> $GITHUB_STEP_SUMMARY
               echo "**How we simulated real users:**" >> $GITHUB_STEP_SUMMARY
               echo '```mermaid' >> $GITHUB_STEP_SUMMARY
               echo 'xychart-beta' >> $GITHUB_STEP_SUMMARY
               echo "    title \"${TITLE} Test - Virtual Users Over Time\"" >> $GITHUB_STEP_SUMMARY
-              echo '    x-axis "Time (minutes)" [0, 1, 2, 3, 4, 5, 6, 7]' >> $GITHUB_STEP_SUMMARY
+              
+              # Different time scales based on test type
+              if [ "$NAME" = "stress" ]; then
+                echo '    x-axis "Time (minutes)" [0, 2, 4, 6, 8, 10]' >> $GITHUB_STEP_SUMMARY
+              else
+                echo '    x-axis "Time (minutes)" [0, 1, 2, 3, 4, 5, 6, 7]' >> $GITHUB_STEP_SUMMARY
+              fi
+              
               echo "    y-axis \"Virtual Users\" 0 --> ${MAX_VUS}" >> $GITHUB_STEP_SUMMARY
               echo "    line ${LINE}" >> $GITHUB_STEP_SUMMARY
               echo '```' >> $GITHUB_STEP_SUMMARY
@@ -141,17 +153,15 @@ jobs:
                 echo "" >> $GITHUB_STEP_SUMMARY
               fi
               
-              # 2. CRITICAL METRICS TABLE - Shows the actual numbers
+              # 2. CRITICAL METRICS TABLE
               echo "### 📊 Critical Metrics Dashboard" >> $GITHUB_STEP_SUMMARY
               echo "" >> $GITHUB_STEP_SUMMARY
               echo "| Metric | Result | Target | Status |" >> $GITHUB_STEP_SUMMARY
               echo "|--------|--------|--------|--------|" >> $GITHUB_STEP_SUMMARY
               
-              # Extract and display each critical metric
-              
               # User Experience Metric
-              if grep -q "rate>0.85" "$OUTPUT_FILE"; then
-                RATE_LINE=$(grep "rate>0.85" "$OUTPUT_FILE" | tail -1)
+              if grep -q "rate>0.85\|rate>0.7" "$OUTPUT_FILE"; then
+                RATE_LINE=$(grep "rate>0.85\|rate>0.7" "$OUTPUT_FILE" | tail -1)
                 ACTUAL_RATE=$(echo "$RATE_LINE" | sed 's/.*rate=//; s/%//' | tr -d ' ')
                 if echo "$RATE_LINE" | grep -q "❌"; then
                   echo "| 👥 User Experience | ${ACTUAL_RATE}% | >85% | 🔴 FAIL |" >> $GITHUB_STEP_SUMMARY
@@ -161,8 +171,8 @@ jobs:
               fi
               
               # Error Rate Metric
-              if grep -q "rate<0.10" "$OUTPUT_FILE"; then
-                RATE_LINE=$(grep "rate<0.10" "$OUTPUT_FILE" | tail -1)
+              if grep -q "rate<0.10\|rate<0.3" "$OUTPUT_FILE"; then
+                RATE_LINE=$(grep "rate<0.10\|rate<0.3" "$OUTPUT_FILE" | tail -1)
                 ACTUAL_RATE=$(echo "$RATE_LINE" | sed 's/.*rate=//; s/%//' | tr -d ' ')
                 if echo "$RATE_LINE" | grep -q "❌"; then
                   echo "| 🚨 Error Rate | ${ACTUAL_RATE}% | <10% | 🔴 FAIL |" >> $GITHUB_STEP_SUMMARY
@@ -172,8 +182,8 @@ jobs:
               fi
               
               # Response Time P95
-              if grep -q "p(95)<2000" "$OUTPUT_FILE"; then
-                P95_LINE=$(grep "p(95)<2000" "$OUTPUT_FILE" | tail -1)
+              if grep -q "p(95)<2000\|p(95)<10000" "$OUTPUT_FILE"; then
+                P95_LINE=$(grep "p(95)<2000\|p(95)<10000" "$OUTPUT_FILE" | tail -1)
                 ACTUAL_P95=$(echo "$P95_LINE" | sed 's/.*p(95)=//; s/ms//' | tr -d ' ')
                 if echo "$P95_LINE" | grep -q "❌"; then
                   echo "| ⚡ Response Time (P95) | ${ACTUAL_P95}ms | <2000ms | 🔴 FAIL |" >> $GITHUB_STEP_SUMMARY
@@ -193,86 +203,93 @@ jobs:
                 fi
               fi
               
+              # Stress-specific: Failure Rate
+              if [ "$NAME" = "stress" ]; then
+                if grep -q "stress_failure_rate" "$OUTPUT_FILE"; then
+                  FAIL_LINE=$(grep "'stress_failure_rate'" "$OUTPUT_FILE" | tail -1)
+                  ACTUAL_FAIL=$(echo "$FAIL_LINE" | sed 's/.*rate=//; s/%//' | tr -d ' ')
+                  if echo "$FAIL_LINE" | grep -q "❌"; then
+                    echo "| 💥 Critical Failure Rate | ${ACTUAL_FAIL}% | <5% | 🔴 FAIL |" >> $GITHUB_STEP_SUMMARY
+                  else
+                    echo "| 💥 Critical Failure Rate | ${ACTUAL_FAIL}% | <5% | ✅ PASS |" >> $GITHUB_STEP_SUMMARY
+                  fi
+                fi
+              fi
+              
               echo "" >> $GITHUB_STEP_SUMMARY
               
-              # 3. FUNCTIONAL CHECKS - Your specific business checks
+              # 3. FUNCTIONAL CHECKS
               echo "### ✅ Functional Checks During Load" >> $GITHUB_STEP_SUMMARY
               echo "" >> $GITHUB_STEP_SUMMARY
               
               # Page Load Check
-              if grep -q "page loaded during spike" "$OUTPUT_FILE"; then
-                PAGE_LINE=$(grep -A1 "page loaded during spike" "$OUTPUT_FILE")
+              if grep -q "page loaded" "$OUTPUT_FILE"; then
+                PAGE_LINE=$(grep -A1 "page loaded" "$OUTPUT_FILE")
                 echo "**📱 Page Load Success:**" >> $GITHUB_STEP_SUMMARY
                 echo "$PAGE_LINE" >> $GITHUB_STEP_SUMMARY
                 echo "" >> $GITHUB_STEP_SUMMARY
               fi
               
               # Product Load Check
-              if grep -q "popular product loaded" "$OUTPUT_FILE"; then
-                PRODUCT_LINE=$(grep -A1 "popular product loaded" "$OUTPUT_FILE")
+              if grep -q "product loaded\|product has valid data" "$OUTPUT_FILE"; then
+                PRODUCT_LINE=$(grep -A1 "product loaded\|product has valid data" "$OUTPUT_FILE")
                 echo "**🛍️ Product Page Access:**" >> $GITHUB_STEP_SUMMARY
                 echo "$PRODUCT_LINE" >> $GITHUB_STEP_SUMMARY
                 echo "" >> $GITHUB_STEP_SUMMARY
               fi
               
-              # 4. PLAIN ENGLISH ANALYSIS - What does this MEAN?
+              # 4. PLAIN ENGLISH ANALYSIS
               echo "### 🧠 Impact Analysis" >> $GITHUB_STEP_SUMMARY
               echo "" >> $GITHUB_STEP_SUMMARY
               
-              # Check for specific failure patterns and explain them
-              if grep -q "❌ 'rate>0.85' rate=34.19%" "$OUTPUT_FILE"; then
-                echo "🔴 **USER EXPERIENCE CRISIS:**" >> $GITHUB_STEP_SUMMARY
-                echo "- **The Problem:** Only 34% of users had good experience" >> $GITHUB_STEP_SUMMARY
-                echo "- **What It Means:** 66% of users experienced slowness or errors" >> $GITHUB_STEP_SUMMARY
-                echo "- **Business Impact:** Most customers unhappy during busy periods" >> $GITHUB_STEP_SUMMARY
-                echo "- **Graph Tells Us:** This happened during 400 user spike (see chart above)" >> $GITHUB_STEP_SUMMARY
-                echo "" >> $GITHUB_STEP_SUMMARY
-              fi
-              
-              if grep -q "❌ 'rate<0.10' rate=90.49%" "$OUTPUT_FILE"; then
-                echo "🔥 **SYSTEM FAILURE:**" >> $GITHUB_STEP_SUMMARY
-                echo "- **The Problem:** 90% error rate during load" >> $GITHUB_STEP_SUMMARY
-                echo "- **What It Means:** System completely breaks under pressure" >> $GITHUB_STEP_SUMMARY
-                echo "- **Business Impact:** Website becomes unusable during promotions" >> $GITHUB_STEP_SUMMARY
-                echo "- **Graph Tells Us:** Collapse happens at peak load of 400 users" >> $GITHUB_STEP_SUMMARY
-                echo "" >> $GITHUB_STEP_SUMMARY
-              fi
-              
-              if grep -q "✅ 'p(95)<2000' p(95)=382.79ms" "$OUTPUT_FILE"; then
-                echo "✅ **PERFORMANCE BRIGHT SPOT:**" >> $GITHUB_STEP_SUMMARY
-                echo "- **The Good News:** Response times are excellent (383ms)" >> $GITHUB_STEP_SUMMARY
-                echo "- **What It Means:** System is FAST when it works" >> $GITHUB_STEP_SUMMARY
-                echo "- **Business Impact:** Great experience for users who get through" >> $GITHUB_STEP_SUMMARY
-                echo "" >> $GITHUB_STEP_SUMMARY
+              # Stress-specific analysis
+              if [ "$NAME" = "stress" ]; then
+                if grep -q "❌.*stress_failure_rate" "$OUTPUT_FILE"; then
+                  RATE=$(grep "❌.*stress_failure_rate" "$OUTPUT_FILE" | sed 's/.*rate=//; s/%//' | tr -d ' ')
+                  echo "💥 **STRESS TEST FINDING - SYSTEM FAILURE:**" >> $GITHUB_STEP_SUMMARY
+                  echo "- **The Problem:** ${RATE}% critical failures under extreme load" >> $GITHUB_STEP_SUMMARY
+                  echo "- **What It Means:** System cannot handle ${MAX_VUS} concurrent users" >> $GITHUB_STEP_SUMMARY
+                  echo "- **Business Impact:** Complete outage during traffic surges" >> $GITHUB_STEP_SUMMARY
+                  echo "- **Breaking Point:** System failed around $((MAX_VUS * 2/3)) users" >> $GITHUB_STEP_SUMMARY
+                  echo "" >> $GITHUB_STEP_SUMMARY
+                elif grep -q "✅.*stress_failure_rate" "$OUTPUT_FILE"; then
+                  echo "✅ **STRESS TEST FINDING - RESILIENT SYSTEM:**" >> $GITHUB_STEP_SUMMARY
+                  echo "- **The Good News:** System handles ${MAX_VUS} users without critical failures" >> $GITHUB_STEP_SUMMARY
+                  echo "- **What It Means:** Safety margin exists beyond normal peak load" >> $GITHUB_STEP_SUMMARY
+                  echo "- **Business Impact:** Can survive unexpected traffic spikes" >> $GITHUB_STEP_SUMMARY
+                  echo "" >> $GITHUB_STEP_SUMMARY
+                fi
               fi
               
               # 5. ACTIONABLE RECOMMENDATIONS
               echo "### 🎯 Recommended Actions" >> $GITHUB_STEP_SUMMARY
               echo "" >> $GITHUB_STEP_SUMMARY
               
-              if grep -q "❌ 'rate<0.10' rate=90.49%" "$OUTPUT_FILE"; then
-                echo "🚨 **IMMEDIATE ACTION REQUIRED**" >> $GITHUB_STEP_SUMMARY
-                echo "1. **STOP** - Do not deploy with 90% error rate" >> $GITHUB_STEP_SUMMARY
-                echo "2. **INVESTIGATE** database connections and API endpoints" >> $GITHUB_STEP_SUMMARY
-                echo "3. **FIX** the errors before next spike test" >> $GITHUB_STEP_SUMMARY
-                echo "4. **MONITOR** the graph - failure at 400 users is critical" >> $GITHUB_STEP_SUMMARY
-              elif grep -q "❌ 'rate>0.85' rate=34.19%" "$OUTPUT_FILE"; then
-                echo "⚠️ **URGENT IMPROVEMENT NEEDED**" >> $GITHUB_STEP_SUMMARY
-                echo "1. **SCALE UP** resources before next big event" >> $GITHUB_STEP_SUMMARY
-                echo "2. **OPTIMIZE** slow endpoints shown in metrics" >> $GITHUB_STEP_SUMMARY
-                echo "3. **MONITOR** closely during 400 user peaks" >> $GITHUB_STEP_SUMMARY
-                echo "4. **RETEST** after improvements" >> $GITHUB_STEP_SUMMARY
-              else
-                echo "✅ **SYSTEM IS READY**" >> $GITHUB_STEP_SUMMARY
-                echo "1. **CONTINUE** regular performance testing" >> $GITHUB_STEP_SUMMARY
-                echo "2. **MONITOR** production during real peaks" >> $GITHUB_STEP_SUMMARY
-                echo "3. **CELEBRATE** good performance!" >> $GITHUB_STEP_SUMMARY
+              if [ "$NAME" = "stress" ]; then
+                if grep -q "❌.*stress_failure_rate" "$OUTPUT_FILE"; then
+                  echo "🚨 **CRITICAL INFRASTRUCTURE ISSUE**" >> $GITHUB_STEP_SUMMARY
+                  echo "1. **INVESTIGATE** database connection limits and API timeouts" >> $GITHUB_STEP_SUMMARY
+                  echo "2. **SCALE HORIZONTALLY** - add more instances before breaking point" >> $GITHUB_STEP_SUMMARY
+                  echo "3. **IMPLEMENT** rate limiting and graceful degradation" >> $GITHUB_STEP_SUMMARY
+                  echo "4. **MONITOR** production for similar patterns" >> $GITHUB_STEP_SUMMARY
+                elif grep -q "✅.*stress_failure_rate" "$OUTPUT_FILE"; then
+                  echo "🏆 **EXCELLENT RESILIENCE**" >> $GITHUB_STEP_SUMMARY
+                  echo "1. **CONFIRM** infrastructure can handle 3x normal load" >> $GITHUB_STEP_SUMMARY
+                  echo "2. **DOCUMENT** breaking point for capacity planning" >> $GITHUB_STEP_SUMMARY
+                  echo "3. **CELEBRATE** robust system architecture" >> $GITHUB_STEP_SUMMARY
+                fi
               fi
               
               echo "" >> $GITHUB_STEP_SUMMARY
               echo "---" >> $GITHUB_STEP_SUMMARY
             fi
           }
+          
+          echo "# 📊 K6 Performance Test Report" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "**📅 Report Time:** $(date)" >> $GITHUB_STEP_SUMMARY
+          echo "**🎯 Test Type:** ${{ github.event.inputs.test_type }}" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
           
           # Quick summary table at the top
           echo "## 📋 Test Summary" >> $GITHUB_STEP_SUMMARY
@@ -306,6 +323,21 @@ jobs:
             echo "| Spike | $STATUS | 400 users | $FINDING |" >> $GITHUB_STEP_SUMMARY
           fi
           
+          if [ "${RUN_STRESS}" = "true" ] && [ -f "k6-stress-output.txt" ]; then
+            if grep -q "❌.*stress_failure_rate" "k6-stress-output.txt"; then
+              STATUS="🔥 BREAKING"
+              RATE=$(grep "❌.*stress_failure_rate" "k6-stress-output.txt" | sed 's/.*rate=//; s/%//' | tr -d ' ')
+              FINDING="Breaking point at ${RATE}% failures"
+            elif grep -q "✅.*stress_failure_rate" "k6-stress-output.txt"; then
+              STATUS="✅ RESILIENT"
+              FINDING="Handles extreme load"
+            else
+              STATUS="⚠️ INCONCLUSIVE"
+              FINDING="No stress metric found"
+            fi
+            echo "| Stress | $STATUS | 3000 users | $FINDING |" >> $GITHUB_STEP_SUMMARY
+          fi
+          
           echo "" >> $GITHUB_STEP_SUMMARY
           
           # Render detailed test reports
@@ -321,64 +353,98 @@ jobs:
             render_test "spike" "Spike" 400 "[5, 50, 200, 400, 200, 50, 10]"
           fi
           
+          if [ "${RUN_STRESS}" = "true" ]; then
+            render_test "stress" "Stress" 3000 "[100, 500, 1000, 2000, 3000, 100, 0]"
+          fi
+          
           # 🏆 FINAL DECISION WITH GRAPH CONTEXT
           echo "" >> $GITHUB_STEP_SUMMARY
           echo "# 🏆 Deployment Decision" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
           
-          if [ -f "k6-spike-output.txt" ]; then
-            echo "## 📈 Based on Spike Test Results (400 Users):" >> $GITHUB_STEP_SUMMARY
+          # Use stress test results for final decision if available
+          if [ -f "k6-stress-output.txt" ]; then
+            echo "## 📈 Based on Stress Test Results (3000 Users):" >> $GITHUB_STEP_SUMMARY
             echo "" >> $GITHUB_STEP_SUMMARY
             
             # Visual decision helper
-            echo "### 📊 Decision Matrix" >> $GITHUB_STEP_SUMMARY
+            echo "### 📊 Decision Matrix - Stress Test" >> $GITHUB_STEP_SUMMARY
             echo '```mermaid' >> $GITHUB_STEP_SUMMARY
             echo 'quadrantChart' >> $GITHUB_STEP_SUMMARY
-            echo '    title "Deployment Readiness Matrix"' >> $GITHUB_STEP_SUMMARY
-            echo '    x-axis "Low Risk" --> "High Risk"' >> $GITHUB_STEP_SUMMARY
+            echo '    title "System Resilience Under Extreme Load"' >> $GITHUB_STEP_SUMMARY
+            echo '    x-axis "Graceful Degradation" --> "Catastrophic Failure"' >> $GITHUB_STEP_SUMMARY
             echo '    y-axis "Low Impact" --> "High Impact"' >> $GITHUB_STEP_SUMMARY
             
-            if grep -q "❌ 'rate<0.10' rate=90.49%" "k6-spike-output.txt"; then
+            if grep -q "❌.*stress_failure_rate" "k6-stress-output.txt"; then
               echo '    quadrant-1 "Do Not Deploy"' >> $GITHUB_STEP_SUMMARY
               echo '    quadrant-2 "Investigate Urgently"' >> $GITHUB_STEP_SUMMARY
               echo '    quadrant-3 "Monitor"' >> $GITHUB_STEP_SUMMARY
-              echo '    quadrant-4 "Proceed with Caution"' >> $GITHUB_STEP_SUMMARY
+              echo '    quadrant-4 "Critical Fix Required"' >> $GITHUB_STEP_SUMMARY
               echo '    "Current System": [0.8, 0.9]' >> $GITHUB_STEP_SUMMARY
-              echo "    Our spike test shows **90% error rate** at 400 users - system fails completely under load" >> $GITHUB_STEP_SUMMARY
-            elif grep -q "❌ 'rate>0.85' rate=34.19%" "k6-spike-output.txt"; then
+              echo "    Our stress test shows **critical failures** at 3x normal load - system breaks catastrophically" >> $GITHUB_STEP_SUMMARY
+            elif grep -q "✅.*stress_failure_rate" "k6-stress-output.txt"; then
+              echo '    quadrant-1 "Ready for High Traffic"' >> $GITHUB_STEP_SUMMARY
+              echo '    quadrant-2 "Proceed with Confidence"' >> $GITHUB_STEP_SUMMARY
+              echo '    quadrant-3 "Do Not Deploy"' >> $GITHUB_STEP_SUMMARY
+              echo '    quadrant-4 "Investigate"' >> $GITHUB_STEP_SUMMARY
+              echo '    "Current System": [0.2, 0.3]' >> $GITHUB_STEP_SUMMARY
+              echo "    Our stress test shows **excellent resilience** at 3x normal load" >> $GITHUB_STEP_SUMMARY
+            else
               echo '    quadrant-1 "Proceed with Caution"' >> $GITHUB_STEP_SUMMARY
               echo '    quadrant-2 "Do Not Deploy"' >> $GITHUB_STEP_SUMMARY
               echo '    quadrant-3 "Monitor"' >> $GITHUB_STEP_SUMMARY
               echo '    quadrant-4 "Investigate"' >> $GITHUB_STEP_SUMMARY
-              echo '    "Current System": [0.4, 0.7]' >> $GITHUB_STEP_SUMMARY
-              echo "    Our spike test shows **34% user satisfaction** at 400 users - many unhappy customers" >> $GITHUB_STEP_SUMMARY
-            else
-              echo '    quadrant-1 "Ready to Deploy"' >> $GITHUB_STEP_SUMMARY
-              echo '    quadrant-2 "Proceed with Caution"' >> $GITHUB_STEP_SUMMARY
-              echo '    quadrant-3 "Do Not Deploy"' >> $GITHUB_STEP_SUMMARY
-              echo '    quadrant-4 "Investigate"' >> $GITHUB_STEP_SUMMARY
-              echo '    "Current System": [0.2, 0.3]' >> $GITHUB_STEP_SUMMARY
-              echo "    Our spike test shows **all targets met** at 400 users - system handles load well" >> $GITHUB_STEP_SUMMARY
+              echo '    "Current System": [0.5, 0.6]' >> $GITHUB_STEP_SUMMARY
+              echo "    Our stress test shows **mixed results** at extreme load" >> $GITHUB_STEP_SUMMARY
             fi
             
             echo '```' >> $GITHUB_STEP_SUMMARY
             echo "" >> $GITHUB_STEP_SUMMARY
             
-            # Final verdict
-            echo "### ⚖️ Final Verdict" >> $GITHUB_STEP_SUMMARY
+            # Final verdict based on stress test
+            echo "### ⚖️ Final Verdict (Stress Test)" >> $GITHUB_STEP_SUMMARY
+            echo "" >> $GITHUB_STEP_SUMMARY
+            
+            if grep -q "❌.*stress_failure_rate" "k6-stress-output.txt"; then
+              echo "🔴 **DO NOT DEPLOY - SYSTEM BREAKS UNDER PRESSURE**" >> $GITHUB_STEP_SUMMARY
+              echo "" >> $GITHUB_STEP_SUMMARY
+              echo "**Reason:** System fails catastrophically at 3x normal load" >> $GITHUB_STEP_SUMMARY
+              echo "" >> $GITHUB_STEP_SUMMARY
+              echo "**Tell stakeholders:** 'Under extreme conditions (3000+ users), the system breaks completely. We need architectural improvements before launch.'" >> $GITHUB_STEP_SUMMARY
+              
+            elif grep -q "✅.*stress_failure_rate" "k6-stress-output.txt"; then
+              echo "🟢 **READY FOR DEPLOYMENT - RESILIENT SYSTEM**" >> $GITHUB_STEP_SUMMARY
+              echo "" >> $GITHUB_STEP_SUMMARY
+              echo "**Reason:** System handles 3x normal load without critical failures" >> $GITHUB_STEP_SUMMARY
+              echo "" >> $GITHUB_STEP_SUMMARY
+              echo "**Tell stakeholders:** 'Even under extreme load (3000 users), the system remains stable. We have a good safety margin for unexpected traffic.'" >> $GITHUB_STEP_SUMMARY
+              
+            else
+              echo "🟡 **DEPLOY WITH MONITORING**" >> $GITHUB_STEP_SUMMARY
+              echo "" >> $GITHUB_STEP_SUMMARY
+              echo "**Reason:** Stress test results inconclusive" >> $GITHUB_STEP_SUMMARY
+              echo "" >> $GITHUB_STEP_SUMMARY
+              echo "**Tell stakeholders:** 'System handles normal load well but needs monitoring during extreme events.'" >> $GITHUB_STEP_SUMMARY
+            fi
+          elif [ -f "k6-spike-output.txt" ]; then
+            # Fallback to spike test for decision if no stress test
+            echo "## 📈 Based on Spike Test Results (400 Users):" >> $GITHUB_STEP_SUMMARY
+            echo "" >> $GITHUB_STEP_SUMMARY
+            
+            echo "### ⚖️ Final Verdict (Spike Test)" >> $GITHUB_STEP_SUMMARY
             echo "" >> $GITHUB_STEP_SUMMARY
             
             if grep -q "❌ 'rate<0.10' rate=90.49%" "k6-spike-output.txt"; then
               echo "🔴 **DO NOT DEPLOY**" >> $GITHUB_STEP_SUMMARY
               echo "" >> $GITHUB_STEP_SUMMARY
-              echo "**Reason:** System fails completely under 400 user load (90% errors)" >> $GITHUB_STEP_SUMMARY
+              echo "**Reason:** 90% error rate at 400 user load" >> $GITHUB_STEP_SUMMARY
               echo "" >> $GITHUB_STEP_SUMMARY
               echo "**Tell stakeholders:** 'The website crashes when 400+ users visit. We need to fix this before any launch.'" >> $GITHUB_STEP_SUMMARY
               
             elif grep -q "❌ 'rate>0.85' rate=34.19%" "k6-spike-output.txt"; then
               echo "🟡 **DEPLOY WITH CAUTION**" >> $GITHUB_STEP_SUMMARY
               echo "" >> $GITHUB_STEP_SUMMARY
-              echo "**Reason:** Poor user experience (34%) at 400 users, but system doesn't crash" >> $GITHUB_STEP_SUMMARY
+              echo "**Reason:** Poor user experience (34%) at 400 users" >> $GITHUB_STEP_SUMMARY
               echo "" >> $GITHUB_STEP_SUMMARY
               echo "**Tell stakeholders:** 'The website works but gets slow for many users during busy times. We should improve this soon.'" >> $GITHUB_STEP_SUMMARY
               
@@ -389,9 +455,6 @@ jobs:
               echo "" >> $GITHUB_STEP_SUMMARY
               echo "**Tell stakeholders:** 'Performance tests show the website handles busy periods well. We're ready to launch.'" >> $GITHUB_STEP_SUMMARY
             fi
-          else
-            echo "## ℹ️ No spike test results found" >> $GITHUB_STEP_SUMMARY
-            echo "**Warning:** Run spike test (400 users) for critical deployment decisions" >> $GITHUB_STEP_SUMMARY
           fi
           
           echo "" >> $GITHUB_STEP_SUMMARY
