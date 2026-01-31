@@ -19,11 +19,10 @@ jobs:
       - name: Setup k6
         uses: grafana/setup-k6-action@v1
       
-      # 3. Install chart generator
+      # 3. [FIXED] Install REAL charting libraries
       - name: Setup chart tools
         run: |
-          npm install -g k6-to-image
-          npm install -g chart.js chartjs-node-canvas
+          npm install chart.js chartjs-node-canvas
       
       # 4. Run the custom k6 test with JSON output
       - name: Run k6 test with custom metrics
@@ -38,39 +37,176 @@ jobs:
           echo "Results saved to: k6-results.json"
           echo "Custom metrics recorded: browse_product_time, get_product_detail_time, critical_api_time"
       
-      # 5. Generate actual graphs from the data
+      # 5. [FIXED] Generate actual graphs using chart.js
       - name: Generate performance charts
         run: |
           mkdir -p charts
           
-          echo "📊 Generating response time chart..."
-          k6-to-image --input k6-results.json \
-                     --output charts/response-times.png \
-                     --metric http_req_duration \
-                     --title "Response Times (95th percentile: p95)"
+          # Create a Node.js script to generate charts
+          cat > generate-charts.js << 'EOF'
+          const fs = require('fs');
+          const { ChartJSNodeCanvas } = require('chartjs-node-canvas');
           
-          echo "📊 Generating virtual users chart..."
-          k6-to-image --input k6-results.json \
-                     --output charts/virtual-users.png \
-                     --metric vus \
-                     --title "Virtual Users Over Time"
+          try {
+            // Load k6 results
+            const data = JSON.parse(fs.readFileSync('./k6-results.json', 'utf8'));
+            
+            // Function to create a chart
+            async function createChart(config, filename, title) {
+              const width = 800;
+              const height = 500;
+              const chartJSNodeCanvas = new ChartJSNodeCanvas({ width, height });
+              
+              const buffer = await chartJSNodeCanvas.renderToBuffer(config);
+              fs.writeFileSync(`./charts/${filename}`, buffer);
+              console.log(`✅ Generated: ${filename} (${title})`);
+            }
+            
+            // Prepare timeline data (simplified - uses metric values)
+            const metrics = data.metrics;
+            
+            // Chart 1: Response Times
+            if (metrics.http_req_duration && metrics.http_req_duration.values) {
+              const durationValues = Object.values(metrics.http_req_duration.values).slice(0, 100);
+              await createChart({
+                type: 'line',
+                data: {
+                  labels: durationValues.map((_, i) => `Point ${i+1}`),
+                  datasets: [{
+                    label: 'Response Time (ms)',
+                    data: durationValues,
+                    borderColor: 'rgb(75, 192, 192)',
+                    backgroundColor: 'rgba(75, 192, 192, 0.1)',
+                    tension: 0.1
+                  }]
+                },
+                options: {
+                  responsive: true,
+                  plugins: {
+                    title: { display: true, text: 'Response Times Over Test' }
+                  }
+                }
+              }, 'response-times.png', 'Response Times');
+            }
+            
+            // Chart 2: Virtual Users
+            if (metrics.vus && metrics.vus.values) {
+              const vusValues = Object.values(metrics.vus.values).slice(0, 100);
+              await createChart({
+                type: 'line',
+                data: {
+                  labels: vusValues.map((_, i) => `Point ${i+1}`),
+                  datasets: [{
+                    label: 'Virtual Users',
+                    data: vusValues,
+                    borderColor: 'rgb(255, 159, 64)',
+                    backgroundColor: 'rgba(255, 159, 64, 0.1)',
+                    fill: true
+                  }]
+                },
+                options: {
+                  responsive: true,
+                  plugins: {
+                    title: { display: true, text: 'Virtual Users Over Time' }
+                  }
+                }
+              }, 'virtual-users.png', 'Virtual Users');
+            }
+            
+            // Chart 3: Custom Metrics
+            const customMetrics = {};
+            for (const [key, metric] of Object.entries(metrics)) {
+              if (key.includes('_time') || key.includes('browse') || key.includes('critical')) {
+                customMetrics[key] = metric;
+              }
+            }
+            
+            if (Object.keys(customMetrics).length > 0) {
+              const datasets = [];
+              const colors = [
+                'rgb(255, 99, 132)',
+                'rgb(54, 162, 235)', 
+                'rgb(255, 205, 86)'
+              ];
+              
+              let colorIndex = 0;
+              for (const [name, metric] of Object.entries(customMetrics)) {
+                if (metric.values) {
+                  const values = Object.values(metric.values).slice(0, 50);
+                  datasets.push({
+                    label: name,
+                    data: values,
+                    borderColor: colors[colorIndex % colors.length],
+                    backgroundColor: `${colors[colorIndex % colors.length]}20`,
+                    tension: 0.1
+                  });
+                  colorIndex++;
+                }
+              }
+              
+              if (datasets.length > 0) {
+                await createChart({
+                  type: 'line',
+                  data: {
+                    labels: datasets[0].data.map((_, i) => `Point ${i+1}`),
+                    datasets: datasets
+                  },
+                  options: {
+                    responsive: true,
+                    plugins: {
+                      title: { display: true, text: 'Custom Metrics Comparison' }
+                    }
+                  }
+                }, 'custom-metrics.png', 'Custom Metrics');
+              }
+            }
+            
+            // Chart 4: Error Rate
+            if (metrics.http_req_failed && metrics.http_req_failed.values) {
+              const errorValues = Object.values(metrics.http_req_failed.values).slice(0, 100);
+              await createChart({
+                type: 'line',
+                data: {
+                  labels: errorValues.map((_, i) => `Point ${i+1}`),
+                  datasets: [{
+                    label: 'Error Rate',
+                    data: errorValues.map(v => v * 100), // Convert to percentage
+                    borderColor: 'rgb(255, 99, 132)',
+                    backgroundColor: 'rgba(255, 99, 132, 0.1)',
+                    tension: 0.1
+                  }]
+                },
+                options: {
+                  responsive: true,
+                  plugins: {
+                    title: { display: true, text: 'Error Rate During Test (%)' }
+                  },
+                  scales: {
+                    y: {
+                      beginAtZero: true,
+                      title: { display: true, text: 'Error Rate %' }
+                    }
+                  }
+                }
+              }, 'error-rate.png', 'Error Rate');
+            }
+            
+            console.log('📊 All charts generated successfully!');
+            
+          } catch (error) {
+            console.error('Error generating charts:', error);
+            process.exit(1);
+          }
+          EOF
           
-          echo "📊 Generating custom metrics chart..."
-          k6-to-image --input k6-results.json \
-                     --output charts/custom-metrics.png \
-                     --metric browse_product_time \
-                     --title "Custom Metric: Product Browse Time"
-          
-          echo "📊 Generating error rate chart..."
-          k6-to-image --input k6-results.json \
-                     --output charts/error-rate.png \
-                     --metric http_req_failed \
-                     --title "Error Rate During Test"
+          # Run the chart generation script
+          echo "📊 Generating charts with chart.js..."
+          node generate-charts.js
           
           echo "✅ Charts generated:"
           ls -la charts/
       
-      # 6. Display graphs in GitHub summary
+      # 6. [UPDATED] Display graph links in GitHub summary
       - name: Create test report with graphs
         run: |
           echo "# 📈 k6 Performance Test Results" >> $GITHUB_STEP_SUMMARY
@@ -87,24 +223,29 @@ jobs:
             echo "" >> $GITHUB_STEP_SUMMARY
           fi
           
-          # Display the charts
-          echo "## 📊 Performance Charts" >> $GITHUB_STEP_SUMMARY
+          # Display chart information (can't embed directly in GitHub summary)
+          echo "## 📊 Performance Charts Generated" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "Charts have been generated and saved as artifacts. Download the **k6-performance-results** artifact to view:" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "1. **response-times.png** - HTTP response times over the test duration" >> $GITHUB_STEP_SUMMARY
+          echo "2. **virtual-users.png** - Virtual user count during the test" >> $GITHUB_STEP_SUMMARY
+          echo "3. **custom-metrics.png** - Your custom metrics (browse_product_time, etc.)" >> $GITHUB_STEP_SUMMARY
+          echo "4. **error-rate.png** - Error rate percentage during the test" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "**Note:** GitHub doesn't support embedding images directly in workflow summaries. Download the artifact to view the charts." >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
           
-          echo "### Response Times" >> $GITHUB_STEP_SUMMARY
-          echo "![Response Times](attachment://response-times.png)" >> $GITHUB_STEP_SUMMARY
-          echo "" >> $GITHUB_STEP_SUMMARY
-          
-          echo "### Virtual Users" >> $GITHUB_STEP_SUMMARY
-          echo "![Virtual Users](attachment://virtual-users.png)" >> $GITHUB_STEP_SUMMARY
-          echo "" >> $GITHUB_STEP_SUMMARY
-          
-          echo "### Custom Metric: Browse Product Time" >> $GITHUB_STEP_SUMMARY
-          echo "![Custom Metric](attachment://custom-metrics.png)" >> $GITHUB_STEP_SUMMARY
-          echo "" >> $GITHUB_STEP_SUMMARY
+          # Show a preview of key metrics if available
+          if [ -f "k6-summary.json" ]; then
+            echo "## 📊 Key Metrics" >> $GITHUB_STEP_SUMMARY
+            echo '```json' >> $GITHUB_STEP_SUMMARY
+            cat k6-summary.json | grep -A 20 '"metrics"' | head -25 >> $GITHUB_STEP_SUMMARY
+            echo '```' >> $GITHUB_STEP_SUMMARY
+          fi
           
           echo "---" >> $GITHUB_STEP_SUMMARY
-          echo "*Charts generated automatically from k6 test data*" >> $GITHUB_STEP_SUMMARY
+          echo "*Charts generated using Chart.js from k6 test data*" >> $GITHUB_STEP_SUMMARY
       
       # 7. Save everything as artifacts
       - name: Upload test artifacts
@@ -116,4 +257,5 @@ jobs:
             k6-summary.json
             k6-output.txt
             charts/
+            generate-charts.js
           retention-days: 30
