@@ -1,35 +1,122 @@
-name: k6 Performance with Graphs
+name: k6 Performance Testing & Reporting
 
 on:
-  workflow_dispatch:
+  workflow_dispatch:  # Allows manual trigger from GitHub UI
   push:
     paths:
-      - 'tests/performance/**'
+      - 'tests/performance/**'  # Auto-runs when test files change
+
+permissions:
+  contents: write   # Needed for GitHub Pages deployment
+  pages: write      # Needed for GitHub Pages deployment
+  id-token: write   # Needed for GitHub Pages deployment
 
 jobs:
-  run-test-and-create-graphs:
+  k6-performance:
     runs-on: ubuntu-latest
 
+    # Environment variables for your performance SLAs (Service Level Agreements)
+    env:
+      SLA_P95_MS: 800      # Target: p95 response time under 800ms
+      SLA_ERROR_RATE: 1    # Target: error rate under 1%
+
     steps:
+      # ------------------------------------------------------------
+      # 1. Checkout Code
+      # ------------------------------------------------------------
       - name: Checkout repository
         uses: actions/checkout@v4
 
+      # ------------------------------------------------------------
+      # 2. Setup k6 Runtime
+      # ------------------------------------------------------------
       - name: Setup k6
         uses: grafana/setup-k6-action@v1
 
+      # ------------------------------------------------------------
+      # 3. Setup Node.js & Charting Libraries
+      # ------------------------------------------------------------
       - name: Setup chart tools
         run: |
-          npm init -y
+          # Initialize package.json if it doesn't exist
+          npm init -y --silent
+          # Install real, existing charting libraries (verified packages)
           npm install chart.js chartjs-node-canvas
 
+      # ------------------------------------------------------------
+      # 4. Run k6 Performance Test
+      # ------------------------------------------------------------
       - name: Run k6 test
         run: |
+          echo "🚀 Starting k6 performance test..."
           k6 run tests/performance/custom-stress.js \
             --out json=k6-results.json \
             --summary-export=k6-summary.json \
             2>&1 | tee k6-output.txt
+          echo "✅ k6 test completed. Results saved."
 
-      - name: Generate performance charts (FIXED)
+      # ------------------------------------------------------------
+      # 5. Diagnostic: Check JSON Structure (Debug Helper)
+      # ------------------------------------------------------------
+      - name: Debug k6 output structure
+        run: |
+          echo "=== 📋 k6 Output Structure Verification ==="
+          if [ -f "k6-summary.json" ]; then
+            echo "✅ k6-summary.json exists"
+            echo "Available metrics:"
+            # Use jq if available, otherwise fallback
+            if command -v jq &> /dev/null; then
+              jq '.metrics | keys[]' k6-summary.json | head -10
+            else
+              echo "Install 'jq' for better parsing. Showing first 500 chars:"
+              head -c 500 k6-summary.json
+            fi
+          else
+            echo "❌ k6-summary.json not found! Check k6 command output."
+            exit 1
+          fi
+
+      # ------------------------------------------------------------
+      # 6. Convert JSON Summary to CSV (For Spreadsheet Analysis)
+      # ------------------------------------------------------------
+      - name: Convert JSON to CSV
+        run: |
+          node <<'EOF'
+          const fs = require('fs');
+          try {
+            const summary = JSON.parse(fs.readFileSync('k6-summary.json', 'utf8'));
+            const metrics = summary.metrics || {};
+            
+            let csv = 'metric,count,rate,avg,med,p(90),p(95),max,min\n';
+            
+            for (const [metricName, metricData] of Object.entries(metrics)) {
+              const values = metricData.values || {};
+              csv += [
+                metricName,
+                values.count || '',
+                values.rate || '',
+                values.avg || '',
+                values.med || '',
+                values['p(90)'] || '',
+                values['p(95)'] || '',
+                values.max || '',
+                values.min || ''
+              ].join(',') + '\n';
+            }
+            
+            fs.writeFileSync('k6-metrics.csv', csv);
+            console.log(`✅ CSV created with ${Object.keys(metrics).length} metrics`);
+          } catch (error) {
+            console.error('❌ CSV conversion failed:', error.message);
+            // Create empty CSV as fallback
+            fs.writeFileSync('k6-metrics.csv', 'metric,error\nError,' + error.message);
+          }
+          EOF
+
+      # ------------------------------------------------------------
+      # 7. Generate Visual Charts from Results (FIXED VERSION)
+      # ------------------------------------------------------------
+      - name: Generate charts
         run: |
           mkdir -p charts
 
@@ -39,61 +126,387 @@ jobs:
 
           (async () => {
             try {
-              // ✅ USE SUMMARY FILE (valid JSON)
-              const summary = JSON.parse(
-                fs.readFileSync('./k6-summary.json', 'utf8')
-              );
+              const summary = JSON.parse(fs.readFileSync('k6-summary.json', 'utf8'));
+              const metrics = summary.metrics || {};
+              
+              // SAFE ACCESS with fallback values
+              const durationMetric = metrics.http_req_duration || {};
+              const durationValues = durationMetric.values || {};
+              
+              // Extract values with sensible defaults
+              const p90 = durationValues['p(90)'] || durationValues.avg || 0;
+              const p95 = durationValues['p(95)'] || durationValues.avg || 0;
+              const avg = durationValues.avg || 0;
+              
+              console.log(`📊 Chart data - p90: ${p90}ms, p95: ${p95}ms, avg: ${avg}ms`);
 
-              const http = summary.metrics.http_req_duration.values;
+              const canvas = new ChartJSNodeCanvas({ width: 900, height: 500 });
 
-              const canvas = new ChartJSNodeCanvas({
-                width: 900,
-                height: 500
-              });
-
-              // -------------------------------
-              // p90 / p95 percentile chart
-              // -------------------------------
-              const image = await canvas.renderToBuffer({
+              // Chart 1: Percentile Comparison
+              const percentileChart = await canvas.renderToBuffer({
                 type: 'bar',
                 data: {
-                  labels: ['p90', 'p95'],
+                  labels: ['p90', 'p95', 'Average'],
                   datasets: [{
-                    label: 'HTTP Request Duration (ms)',
-                    data: [http['p(90)'], http['p(95)']],
-                    backgroundColor: ['#36a2eb', '#ff6384']
+                    label: 'HTTP Response Time (ms)',
+                    data: [p90, p95, avg],
+                    backgroundColor: ['#36a2eb', '#ff6384', '#4bc0c0']
                   }]
                 },
                 options: {
-                  plugins: {
-                    title: {
+                  responsive: true,
+                  plugins: { 
+                    title: { 
+                      display: true, 
+                      text: 'Response Time Distribution' 
+                    },
+                    subtitle: {
                       display: true,
-                      text: 'HTTP Latency Percentiles'
+                      text: `Total Requests: ${durationValues.count || 0}`
+                    }
+                  },
+                  scales: {
+                    y: {
+                      beginAtZero: true,
+                      title: { display: true, text: 'Time (ms)' }
                     }
                   }
                 }
               });
 
-              fs.writeFileSync('charts/http-percentiles.png', image);
-
-              console.log('✅ Percentile chart generated');
-            } catch (err) {
-              console.error('❌ Chart generation failed:', err.message);
-              process.exit(1);
+              fs.writeFileSync('charts/response-percentiles.png', percentileChart);
+              console.log('✅ Generated charts/response-percentiles.png');
+              
+              // Chart 2: Error Rate if available
+              const errorMetric = metrics.http_req_failed || {};
+              const errorValues = errorMetric.values || {};
+              const errorRate = (errorValues.rate || 0) * 100;
+              
+              if (errorRate > 0) {
+                const errorCanvas = new ChartJSNodeCanvas({ width: 600, height: 400 });
+                const errorChart = await errorCanvas.renderToBuffer({
+                  type: 'doughnut',
+                  data: {
+                    labels: ['Success', 'Errors'],
+                    datasets: [{
+                      data: [100 - errorRate, errorRate],
+                      backgroundColor: ['#4caf50', '#f44336']
+                    }]
+                  },
+                  options: {
+                    plugins: {
+                      title: { display: true, text: `Error Rate: ${errorRate.toFixed(2)}%` }
+                    }
+                  }
+                });
+                fs.writeFileSync('charts/error-rate.png', errorChart);
+                console.log('✅ Generated charts/error-rate.png');
+              }
+              
+            } catch (error) {
+              console.error('❌ Chart generation failed:', error.message);
+              // Create error log for debugging
+              fs.writeFileSync('charts/generation-error.log', 
+                `Error: ${error.message}\nStack: ${error.stack}\n`);
+              // Don't fail the whole workflow, just note the chart failure
+              process.exit(0); // Exit with success so workflow continues
             }
           })();
           EOF
 
+          echo "📊 Generating performance charts..."
           node generate-charts.cjs
-          ls -la charts/
+          echo "✅ Chart generation completed"
 
-      - name: Upload test artifacts
+      # ------------------------------------------------------------
+      # 8. Generate Automated Performance Insights
+      # ------------------------------------------------------------
+      - name: Generate performance insights
+        run: |
+          node <<'EOF'
+          const fs = require('fs');
+          
+          try {
+            const summary = JSON.parse(fs.readFileSync('k6-summary.json', 'utf8'));
+            const metrics = summary.metrics || {};
+            
+            // Extract metrics with safe access
+            const durationValues = metrics.http_req_duration?.values || {};
+            const errorValues = metrics.http_req_failed?.values || {};
+            
+            const p50 = durationValues.med || durationValues.avg || 0;
+            const p90 = durationValues['p(90)'] || durationValues.avg || 0;
+            const p95 = durationValues['p(95)'] || durationValues.avg || 0;
+            const max = durationValues.max || 0;
+            const errorRate = (errorValues.rate || 0) * 100;
+            
+            // Get SLA from environment or use defaults
+            const SLA_P95_MS = parseInt(process.env.SLA_P95_MS || '800');
+            const SLA_ERROR_RATE = parseInt(process.env.SLA_ERROR_RATE || '1');
+            
+            let insights = [`# Performance Test Insights\n`];
+            insights.push(`**Test Time:** ${new Date().toLocaleString()}`);
+            insights.push(`**Total Requests:** ${durationValues.count || 0}`);
+            insights.push('');
+            
+            // 1. Latency Analysis
+            insights.push(`## 📈 Latency Analysis`);
+            if (p95 > SLA_P95_MS) {
+              const overage = ((p95 - SLA_P95_MS) / SLA_P95_MS * 100).toFixed(0);
+              insights.push(`🚨 **CRITICAL - SLA Violation**`);
+              insights.push(`- p95 (${Math.round(p95)} ms) exceeds SLA by ${overage}%`);
+              insights.push(`- Target: < ${SLA_P95_MS} ms, Actual: ${Math.round(p95)} ms`);
+              insights.push(`- Impact: Users experiencing noticeable delays`);
+            } else if (p95 > SLA_P95_MS * 0.7) {
+              insights.push(`⚠️ **WARNING - Approaching Limit**`);
+              insights.push(`- p95 (${Math.round(p95)} ms) is close to SLA`);
+              insights.push(`- ${Math.round(SLA_P95_MS - p95)} ms safety margin remaining`);
+            } else {
+              insights.push(`✅ **HEALTHY - Within SLA**`);
+              insights.push(`- p95 (${Math.round(p95)} ms) is ${Math.round(SLA_P95_MS - p95)} ms under target`);
+            }
+            
+            insights.push(`\n**Percentile Breakdown:**`);
+            insights.push(`- p50 (median): ${Math.round(p50)} ms`);
+            insights.push(`- p90: ${Math.round(p90)} ms`);
+            insights.push(`- p95: ${Math.round(p95)} ms`);
+            insights.push(`- Maximum: ${Math.round(max)} ms`);
+            
+            // 2. Error Analysis
+            insights.push(`\n## 🚨 Error Analysis`);
+            if (errorRate > SLA_ERROR_RATE) {
+              insights.push(`❌ **CRITICAL - Error SLA Violation**`);
+              insights.push(`- Error rate: ${errorRate.toFixed(2)}% (limit: ${SLA_ERROR_RATE}%)`);
+              insights.push(`- ${(errorRate - SLA_ERROR_RATE).toFixed(2)}% over acceptable limit`);
+            } else if (errorRate > 0) {
+              insights.push(`⚠️ **Acceptable - Minor Errors**`);
+              insights.push(`- Error rate: ${errorRate.toFixed(2)}% (within ${SLA_ERROR_RATE}% limit)`);
+            } else {
+              insights.push(`✅ **EXCELLENT - No Errors**`);
+              insights.push(`- 0% error rate`);
+            }
+            
+            // 3. Load Profile
+            insights.push(`\n## 👥 Load Profile`);
+            if (metrics.vus?.values) {
+              insights.push(`- Peak Virtual Users: ${metrics.vus.values.max || 'N/A'}`);
+            }
+            if (metrics.iterations?.values) {
+              insights.push(`- Total Iterations: ${metrics.iterations.values.count || 'N/A'}`);
+            }
+            
+            // 4. Recommendations
+            insights.push(`\n## 🎯 Recommendations`);
+            if (p95 > SLA_P95_MS) {
+              insights.push(`1. **Immediate Action Required:**`);
+              insights.push(`   - Investigate slow endpoints (check p95 > ${SLA_P95_MS}ms)`);
+              insights.push(`   - Review database query performance`);
+              insights.push(`   - Check for resource bottlenecks (CPU, Memory)`);
+            }
+            if (errorRate > SLA_ERROR_RATE) {
+              insights.push(`2. **Error Investigation Required:**`);
+              insights.push(`   - Check application logs for ${errorRate.toFixed(2)}% errors`);
+              insights.push(`   - Verify backend service availability`);
+              insights.push(`   - Review API error responses`);
+            }
+            
+            if (p95 <= SLA_P95_MS && errorRate <= SLA_ERROR_RATE) {
+              insights.push(`1. **System is performing well!**`);
+              insights.push(`2. Continue monitoring and regular testing`);
+            }
+            
+            const insightsText = insights.join('\n');
+            fs.writeFileSync('performance-insights.md', insightsText);
+            console.log('✅ Generated performance-insights.md');
+            
+            // Also log summary to console
+            console.log('\n' + '='.repeat(60));
+            console.log('QUICK SUMMARY:');
+            console.log(`Response p95: ${Math.round(p95)}ms (SLA: ${SLA_P95_MS}ms)`);
+            console.log(`Error Rate: ${errorRate.toFixed(2)}% (SLA: ${SLA_ERROR_RATE}%)`);
+            console.log(`Status: ${p95 > SLA_P95_MS || errorRate > SLA_ERROR_RATE ? '❌ FAIL' : '✅ PASS'}`);
+            console.log('='.repeat(60));
+            
+          } catch (error) {
+            console.error('Error generating insights:', error);
+            fs.writeFileSync('performance-insights.md', `# Error\n\nFailed to generate insights: ${error.message}`);
+          }
+          EOF
+
+      # ------------------------------------------------------------
+      # 9. SLA Enforcement - Fail workflow if SLAs are violated
+      # ------------------------------------------------------------
+      - name: Enforce SLA
+        run: |
+          node <<'EOF'
+          try {
+            const fs = require('fs');
+            const summary = JSON.parse(fs.readFileSync('k6-summary.json', 'utf8'));
+            
+            const p95 = summary.metrics?.http_req_duration?.values?.['p(95)'] || 0;
+            const errorRate = (summary.metrics?.http_req_failed?.values?.rate || 0) * 100;
+            
+            const SLA_P95_MS = parseInt(process.env.SLA_P95_MS || '800');
+            const SLA_ERROR_RATE = parseInt(process.env.SLA_ERROR_RATE || '1');
+            
+            console.log(`SLA Check:`);
+            console.log(`  p95: ${Math.round(p95)}ms vs ${SLA_P95_MS}ms target`);
+            console.log(`  Errors: ${errorRate.toFixed(2)}% vs ${SLA_ERROR_RATE}% target`);
+            
+            let failed = false;
+            
+            if (p95 > SLA_P95_MS) {
+              console.error(`❌ FAIL: p95 latency (${Math.round(p95)}ms) exceeds SLA (${SLA_P95_MS}ms)`);
+              failed = true;
+            }
+            
+            if (errorRate > SLA_ERROR_RATE) {
+              console.error(`❌ FAIL: Error rate (${errorRate.toFixed(2)}%) exceeds SLA (${SLA_ERROR_RATE}%)`);
+              failed = true;
+            }
+            
+            if (failed) {
+              console.log('\n🚨 SLA violations detected. Failing workflow.');
+              process.exit(1);
+            } else {
+              console.log('\n✅ All SLA targets met.');
+            }
+          } catch (error) {
+            console.error('SLA enforcement error:', error.message);
+            process.exit(1); // Fail if we can't check SLAs
+          }
+          EOF
+
+      # ------------------------------------------------------------
+      # 10. Upload All Results as Workflow Artifacts
+      # ------------------------------------------------------------
+      - name: Upload artifacts
         uses: actions/upload-artifact@v4
         with:
           name: k6-performance-results
           path: |
-            k6-results.json
-            k6-summary.json
-            k6-output.txt
             charts/
-            generate-charts.cjs
+            k6-summary.json
+            k6-results.json
+            k6-metrics.csv
+            performance-insights.md
+            k6-output.txt
+          retention-days: 30
+
+      # ------------------------------------------------------------
+      # 11. Build GitHub Pages Report
+      # ------------------------------------------------------------
+      - name: Build Pages report
+        run: |
+          mkdir -p public
+          
+          # Copy charts to public directory
+          cp -r charts/* public/ 2>/dev/null || echo "No charts to copy"
+          
+          # Create HTML report
+          cat > public/index.html <<'EOF'
+          <!DOCTYPE html>
+          <html lang="en">
+          <head>
+              <meta charset="UTF-8">
+              <meta name="viewport" content="width=device-width, initial-scale=1.0">
+              <title>k6 Performance Test Report</title>
+              <style>
+                  body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; 
+                         margin: 40px; line-height: 1.6; }
+                  .container { max-width: 1200px; margin: 0 auto; }
+                  header { border-bottom: 2px solid #0366d6; padding-bottom: 20px; margin-bottom: 30px; }
+                  .chart { background: white; border-radius: 8px; padding: 20px; 
+                          margin: 20px 0; box-shadow: 0 2px 10px rgba(0,0,0,0.1); }
+                  .insights { background: #f6f8fa; padding: 20px; border-radius: 8px; 
+                             white-space: pre-wrap; font-family: monospace; }
+                  .pass { color: #22863a; font-weight: bold; }
+                  .fail { color: #cb2431; font-weight: bold; }
+                  .warning { color: #f66a0a; font-weight: bold; }
+              </style>
+          </head>
+          <body>
+              <div class="container">
+                  <header>
+                      <h1>📊 k6 Performance Test Report</h1>
+                      <p>Generated: <span id="date"></span></p>
+                  </header>
+                  
+                  <section class="chart">
+                      <h2>Response Time Percentiles</h2>
+                      <img src="response-percentiles.png" alt="Response Time Chart" 
+                           style="max-width: 100%; height: auto;">
+                  </section>
+                  
+          EOF
+          
+          # Add error chart if it exists
+          if [ -f "charts/error-rate.png" ]; then
+              cat >> public/index.html <<'EOF'
+                  <section class="chart">
+                      <h2>Error Rate Distribution</h2>
+                      <img src="error-rate.png" alt="Error Rate Chart" 
+                           style="max-width: 600px; height: auto;">
+                  </section>
+          EOF
+          fi
+          
+          # Add insights
+          cat >> public/index.html <<'EOF'
+                  <section>
+                      <h2>🧠 Performance Insights</h2>
+                      <div class="insights">
+          EOF
+          
+          # Embed the insights markdown (converted to HTML-safe)
+          if [ -f "performance-insights.md" ]; then
+              # Simple conversion: replace markdown headers and bold
+              sed 's/^#/##/g; s/\*\*\([^*]*\)\*\*/<strong>\1<\/strong>/g;' performance-insights.md >> public/index.html
+          else
+              echo "No insights available" >> public/index.html
+          fi
+          
+          cat >> public/index.html <<'EOF'
+                      </div>
+                  </section>
+                  
+                  <footer style="margin-top: 40px; padding-top: 20px; border-top: 1px solid #e1e4e8;">
+                      <p>Report generated by k6 Performance Testing Workflow</p>
+                      <p>All raw data available in workflow artifacts</p>
+                  </footer>
+              </div>
+              
+              <script>
+                  document.getElementById('date').textContent = new Date().toLocaleString();
+              </script>
+          </body>
+          </html>
+          EOF
+          
+          echo "✅ GitHub Pages report built"
+
+      # ------------------------------------------------------------
+      # 12. Upload to GitHub Pages
+      # ------------------------------------------------------------
+      - name: Deploy Pages artifact
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: public/
+
+  # ------------------------------------------------------------
+  # DEPLOY JOB - Only runs if performance tests pass SLAs
+  # ------------------------------------------------------------
+  deploy:
+    needs: k6-performance  # Depends on successful test completion
+    runs-on: ubuntu-latest
+    if: success()  # Only deploy if all previous steps succeeded
+    
+    # GitHub Pages environment
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    
+    steps:
+      - name: Deploy to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v4
