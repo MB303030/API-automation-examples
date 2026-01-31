@@ -1,4 +1,3 @@
-import http from 'k6/http';
 import { check, sleep } from 'k6';
 
 import {
@@ -8,13 +7,14 @@ import {
 } from '../../../utils/config/endpoints.js';
 
 import {
+  httpGet,
   hasStatus,
   hasArray,
-  hasArrayWithItems,
   hasRequiredFields,
   weightedRandom,
   randomFrom,
   randomInt,
+  randomFloat,
 } from '../../../utils/core/k6-helpers.js';
 
 const trafficData = JSON.parse(
@@ -47,7 +47,7 @@ function browseProducts() {
   const limit = randomInt(1, 20);
   const skip = randomInt(0, 100);
 
-  const response = http.get(getProductsEndpoint(limit, skip), {
+  const response = httpGet(getProductsEndpoint(limit, skip), {
     tags: { scenario: 'browse_products' },
   });
 
@@ -60,7 +60,7 @@ function browseProducts() {
 function viewProductDetail() {
   const productId = randomInt(1, 100);
   
-  const response = http.get(getProductByIdEndpoint(productId), {
+  const response = httpGet(getProductByIdEndpoint(productId), {
     tags: { scenario: 'view_product' },
   });
 
@@ -73,7 +73,7 @@ function viewProductDetail() {
 function searchProducts() {
   const searchTerm = randomFrom(SEARCH_TERMS);
   
-  const response = http.get(searchProductsEndpoint(searchTerm), {
+  const response = httpGet(searchProductsEndpoint(searchTerm), {
     tags: { scenario: 'search_products' },
   });
 
@@ -101,6 +101,5 @@ export default function () {
   }
 
   // Think time: 2-5 seconds (uniform distribution)
-  const thinkTime = 2 + Math.random() * 3;
-  sleep(thinkTime);
+  sleep(randomFloat(2, 5));
 }

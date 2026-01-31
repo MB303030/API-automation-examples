@@ -1,4 +1,3 @@
-import http from 'k6/http';
 import { check, sleep } from 'k6';
 
 import {
@@ -9,12 +8,15 @@ import {
 } from '../../../utils/config/endpoints.js';
 
 import {
+  httpGet,
   hasStatus,
   hasArray,
   hasRequiredFields,
   responseUnder,
   randomFrom,
   randomInt,
+  randomFloat,
+  chance,
 } from '../../../utils/core/k6-helpers.js';
 
 const trafficData = JSON.parse(
@@ -35,7 +37,7 @@ const PRODUCT_REQUIRED_FIELDS = ['id', 'title', 'price'];
 // Spike scenario handlers
 function browseFirstPage() {
   const limit = randomInt(1, 5); // Small page for fast loading
-  const response = http.get(getProductsEndpoint(limit, 0), {
+  const response = httpGet(getProductsEndpoint(limit, 0), {
     tags: { scenario: 'spike_browse' },
   });
 
@@ -48,7 +50,7 @@ function browseFirstPage() {
 
 function viewPopularProduct() {
   const productId = randomFrom(POPULAR_PRODUCT_IDS);
-  const response = http.get(getProductByIdEndpoint(productId), {
+  const response = httpGet(getProductByIdEndpoint(productId), {
     tags: { scenario: 'spike_product' },
   });
 
@@ -60,7 +62,7 @@ function viewPopularProduct() {
 
 function searchTrending() {
   const term = randomFrom(TRENDING_SEARCH_TERMS);
-  const response = http.get(searchProductsEndpoint(term), {
+  const response = httpGet(searchProductsEndpoint(term), {
     tags: { scenario: 'spike_search' },
   });
 
@@ -72,7 +74,7 @@ function searchTrending() {
 
 function browseCategory() {
   const category = randomFrom(POPULAR_CATEGORIES);
-  const response = http.get(getProductsByCategoryEndpoint(category), {
+  const response = httpGet(getProductsByCategoryEndpoint(category), {
     tags: { scenario: 'spike_category' },
   });
 
@@ -88,35 +90,35 @@ export default function () {
   // During spikes, users perform rapid, overlapping actions
   
   // Simulate page refresh behavior (60% of users refresh 1-3 times)
-  const refreshCount = Math.random() < 0.6 ? randomInt(1, 3) : 1;
+  const refreshCount = chance(0.6) ? randomInt(1, 3) : 1;
 
   for (let i = 0; i < refreshCount; i++) {
     // SCENARIO 1: Browse first page (90% during spike)
-    if (Math.random() < 0.9) {
+    if (chance(0.9)) {
       browseFirstPage();
     }
 
     // SCENARIO 2: View popular product (70% during spike)
-    if (Math.random() < 0.7) {
+    if (chance(0.7)) {
       viewPopularProduct();
     }
 
     // SCENARIO 3: Search for trending items (50% during spike)
-    if (Math.random() < 0.5) {
+    if (chance(0.5)) {
       searchTrending();
     }
 
     // SCENARIO 4: Browse by category (30% during spike)
-    if (Math.random() < 0.3) {
+    if (chance(0.3)) {
       browseCategory();
     }
 
-    // Very short pause between rapid actions during spike
+    // Very short pause between rapid actions during spike (0-0.2 seconds)
     if (i < refreshCount - 1) {
-      sleep(Math.random() * 0.2);
+      sleep(randomFloat(0, 0.2));
     }
   }
 
   // Short think time after spike activity (0.1-0.6 seconds)
-  sleep(Math.random() * 0.5 + 0.1);
+  sleep(randomFloat(0.1, 0.6));
 }

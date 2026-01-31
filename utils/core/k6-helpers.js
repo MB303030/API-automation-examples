@@ -2,6 +2,74 @@
    K6 PERFORMANCE TEST HELPERS
 ───────────────────────────── */
 
+import http from 'k6/http';
+
+/* ─────────────────────────────
+   HTTP REQUEST HELPERS
+───────────────────────────── */
+
+/**
+ * Perform a GET request with standard options
+ * @param {string} url - The URL to request
+ * @param {Object} options - Request options (tags, timeout, etc.)
+ * @returns {Object} K6 HTTP response
+ */
+export function httpGet(url, options = {}) {
+  const defaultOptions = {
+    timeout: '10s',
+  };
+  return http.get(url, Object.assign({}, defaultOptions, options));
+}
+
+/**
+ * Perform a POST request with standard options
+ * @param {string} url - The URL to request
+ * @param {Object|string} body - Request body
+ * @param {Object} options - Request options
+ * @returns {Object} K6 HTTP response
+ */
+export function httpPost(url, body = null, options = {}) {
+  const defaultOptions = {
+    timeout: '10s',
+    headers: { 'Content-Type': 'application/json' },
+  };
+  const payload = typeof body === 'object' ? JSON.stringify(body) : body;
+  return http.post(url, payload, Object.assign({}, defaultOptions, options));
+}
+
+/**
+ * Perform a PUT request with standard options
+ * @param {string} url - The URL to request
+ * @param {Object|string} body - Request body
+ * @param {Object} options - Request options
+ * @returns {Object} K6 HTTP response
+ */
+export function httpPut(url, body = null, options = {}) {
+  const defaultOptions = {
+    timeout: '10s',
+    headers: { 'Content-Type': 'application/json' },
+  };
+  const payload = typeof body === 'object' ? JSON.stringify(body) : body;
+  return http.put(url, payload, Object.assign({}, defaultOptions, options));
+}
+
+/**
+ * Perform a DELETE request with standard options
+ * @param {string} url - The URL to request
+ * @param {Object} options - Request options
+ * @returns {Object} K6 HTTP response
+ */
+export function httpDelete(url, options = {}) {
+  const defaultOptions = {
+    timeout: '10s',
+  };
+  return http.del(url, null, Object.assign({}, defaultOptions, options));
+}
+
+/* ─────────────────────────────
+   RESPONSE VALIDATION HELPERS
+───────────────────────────── */
+
 /**
  * Safely parse JSON response body
  * @param {Object} response - K6 HTTP response object
@@ -128,6 +196,25 @@ export function randomFrom(array) {
  */
 export function randomInt(min, max) {
   return Math.floor(Math.random() * (max - min + 1)) + min;
+}
+
+/**
+ * Get random float between min and max
+ * @param {number} min - Minimum value
+ * @param {number} max - Maximum value
+ * @returns {number} Random float
+ */
+export function randomFloat(min, max) {
+  return min + Math.random() * (max - min);
+}
+
+/**
+ * Returns true with the given probability
+ * @param {number} probability - Probability between 0 and 1 (e.g., 0.6 for 60%)
+ * @returns {boolean} True with the given probability
+ */
+export function chance(probability) {
+  return Math.random() < probability;
 }
 
 /**

@@ -1,4 +1,3 @@
-import http from 'k6/http';
 import { check, sleep } from 'k6';
 
 import {
@@ -8,6 +7,7 @@ import {
 } from '../../../utils/config/endpoints.js';
 
 import {
+  httpGet,
   hasStatus,
   responseUnder,
   hasArrayWithItems,
@@ -15,6 +15,7 @@ import {
   hasRequiredFields,
   randomFrom,
   randomInt,
+  randomFloat,
 } from '../../../utils/core/k6-helpers.js';
 
 const trafficData = JSON.parse(
@@ -32,7 +33,7 @@ const PRODUCT_REQUIRED_FIELDS = ['id', 'title', 'price', 'description', 'categor
 
 export default function () {
   // TEST 1: GET PRODUCTS LIST
-  const productsResponse = http.get(getProductsEndpoint(5, 0), {
+  const productsResponse = httpGet(getProductsEndpoint(5, 0), {
     tags: { scenario: 'smoke_browse' },
     timeout: '5s'
   });
@@ -45,7 +46,7 @@ export default function () {
 
   // TEST 2: GET SINGLE PRODUCT
   const productId = randomInt(1, 10);
-  const productResponse = http.get(getProductByIdEndpoint(productId), {
+  const productResponse = httpGet(getProductByIdEndpoint(productId), {
     tags: { scenario: 'smoke_product' },
     timeout: '5s'
   });
@@ -58,7 +59,7 @@ export default function () {
 
   // TEST 3: SEARCH PRODUCTS
   const searchTerm = randomFrom(SEARCH_TERMS);
-  const searchResponse = http.get(searchProductsEndpoint(searchTerm), {
+  const searchResponse = httpGet(searchProductsEndpoint(searchTerm), {
     tags: { scenario: 'smoke_search' },
     timeout: '5s'
   });
@@ -69,5 +70,6 @@ export default function () {
     'GET /products/search - has results array': hasArray('products'),
   });
 
-  sleep(0.5 + Math.random() * 1);
+  // Think time: 0.5-1.5 seconds
+  sleep(randomFloat(0.5, 1.5));
 }
