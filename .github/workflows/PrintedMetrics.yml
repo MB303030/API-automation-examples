@@ -1,0 +1,128 @@
+name: GPT Regional API Tests (With Printed Metrics)
+
+on:
+  workflow_dispatch:
+    inputs:
+      test_type:
+        description: 'Which existing test to run in all regions?'
+        required: true
+        default: 'load'
+        type: choice
+        options:
+          - smoke
+          - load
+          - spike
+          - stress
+
+jobs:
+  test-regions:
+    defaults:
+      run:
+        shell: bash
+    strategy:
+      matrix:
+        runner: [ubuntu-latest, windows-latest]
+        include:
+          - runner: ubuntu-latest
+            region_label: "US (Likely West)"
+            region_id: us-west
+          - runner: windows-latest
+            region_label: "EU (Likely Netherlands)"
+            region_id: eu-nl
+    runs-on: ${{ matrix.runner }}
+
+    # This allows the 'combine-report' job to read outputs from this job
+    outputs:
+      us-west-metrics: ${{ steps.set-metrics.outputs.us-west-metrics }}
+      eu-nl-metrics: ${{ steps.set-metrics.outputs.eu-nl-metrics }}
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup k6
+        uses: grafana/setup-k6-action@v1
+
+      - name: Run test and capture metrics
+        id: run-k6
+        run: |
+          TEST_TYPE="${{ github.event.inputs.test_type }}"
+          TEST_PATH="tests/performance/$TEST_TYPE/dummyjson-$TEST_TYPE.js"
+
+          echo "📁 Running: $TEST_PATH"
+          echo "📍 Region: ${{ matrix.region_label }} (${{ matrix.region_id }})"
+
+          # Run k6 and capture the full console output
+          k6 run "$TEST_PATH" --summary-export=summary.json 2>&1 | tee console-output.txt
+
+      - name: Parse and print key metrics
+        id: set-metrics
+        run: |
+          # Parse the summary.json file created by k6
+          AVG_MS=$(jq -r '.metrics.http_req_duration.values.avg // 0' summary.json)
+          P95_MS=$(jq -r '.metrics.http_req_duration.values."p(95)" // 0' summary.json)
+          ERROR_RATE=$(jq -r '.metrics.http_req_failed.values.rate // 0' summary.json)
+          ERROR_PCT=$(echo "scale=2; $ERROR_RATE * 100" | bc)
+          VUS_MAX=$(jq -r '.metrics.vus.values.max // 0' summary.json)
+
+          # Print metrics directly to the job log for immediate viewing
+          echo "========================================"
+          echo "📊 REGION: ${{ matrix.region_label }}"
+          echo "========================================"
+          echo "Avg Response Time: ${AVG_MS} ms"
+          echo "95th Percentile (p95): ${P95_MS} ms"
+          echo "Error Rate: ${ERROR_PCT}%"
+          echo "Max Virtual Users: ${VUS_MAX}"
+          echo ""
+
+          # Create a compact metrics string and set it as a job output
+          METRICS_STRING="${{ matrix.region_id }}|${{ matrix.region_label }}|${AVG_MS}|${P95_MS}|${ERROR_PCT}|${VUS_MAX}"
+          echo "metrics=$METRICS_STRING" >> $GITHUB_OUTPUT
+
+          # Also set a specific output variable for this region
+          # This uses dynamic variable naming based on region_id
+          echo "${{ matrix.region_id }}-metrics=$METRICS_STRING" >> $GITHUB_OUTPUT
+
+      # Optional: Keep artifact upload for deep debugging (comment out if not needed)
+      - name: Upload results (Optional)
+        uses: actions/upload-artifact@v4
+        with:
+          name: results-${{ matrix.region_id }}-${{ github.event.inputs.test_type }}
+          path: |
+            summary.json
+            console-output.txt
+
+  combine-report:
+    runs-on: ubuntu-latest
+    needs: test-regions
+
+    steps:
+      - name: Create combined summary table
+        run: |
+          echo "# 🌍 Regional Performance Comparison" >> $GITHUB_STEP_SUMMARY
+          echo "**Test:** ${{ github.event.inputs.test_type }}" >> $GITHUB_STEP_SUMMARY
+          echo "**Generated:** $(date)" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "## Results Summary" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "| Region | Avg Latency | p95 Latency | Error Rate | Max VUs |" >> $GITHUB_STEP_SUMMARY
+          echo "|--------|-------------|-------------|------------|---------|" >> $GITHUB_STEP_SUMMARY
+
+          # Get metrics from the previous job outputs
+          # We need to check which regions actually ran
+          if [ -n "${{ needs.test-regions.outputs.us-west-metrics }}" ]; then
+            IFS='|' read -r region_id region_label avg_ms p95_ms error_pct vus_max <<< "${{ needs.test-regions.outputs.us-west-metrics }}"
+            echo "| $region_label | ${avg_ms}ms | ${p95_ms}ms | ${error_pct}% | $vus_max |" >> $GITHUB_STEP_SUMMARY
+          fi
+
+          if [ -n "${{ needs.test-regions.outputs.eu-nl-metrics }}" ]; then
+            IFS='|' read -r region_id region_label avg_ms p95_ms error_pct vus_max <<< "${{ needs.test-regions.outputs.eu-nl-metrics }}"
+            echo "| $region_label | ${avg_ms}ms | ${p95_ms}ms | ${error_pct}% | $vus_max |" >> $GITHUB_STEP_SUMMARY
+          fi
+
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "---" >> $GITHUB_STEP_SUMMARY
+          echo "*Note: Runners 'ubuntu-latest' (US) and 'windows-latest' (EU) execute from different geographic regions.*" >> $GITHUB_STEP_SUMMARY
+
+          # Also print to console for easy log viewing
+          cat $GITHUB_STEP_SUMMARY
