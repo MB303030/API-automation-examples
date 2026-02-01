@@ -1,4 +1,4 @@
-name: all regions
+name: All regions at once
 
 on:
   workflow_dispatch:
