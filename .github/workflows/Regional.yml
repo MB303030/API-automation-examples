@@ -1,7 +1,7 @@
 name: Regional API Tests
 
 on:
-  workflow_dispatch: # Run it manually
+  workflow_dispatch: # Manual trigger
     inputs:
       test_type:
         description: 'Which existing test to run in all regions?'
@@ -9,10 +9,10 @@ on:
         default: 'load'
         type: choice
         options:
-        - smoke
-        - load
-        - spike
-        - stress
+          - smoke
+          - load
+          - spike
+          - stress
 
 jobs:
   test-regions:
@@ -21,9 +21,9 @@ jobs:
         runner: [ubuntu-latest, windows-latest]
         include:
           - runner: ubuntu-latest
-            region_label: "US (West)"
+            region_label: "US (Likely West)"
           - runner: windows-latest
-            region_label: "EU (Netherlands)"
+            region_label: "EU (Likely Netherlands)"
     runs-on: ${{ matrix.runner }}
 
     steps:
@@ -33,54 +33,85 @@ jobs:
       - name: Setup k6
         uses: grafana/setup-k6-action@v1
 
-      - name: Run ${{ github.event.inputs.test_type }} test from ${{ matrix.region_label }}
+      # FIXED STEP: Variable is stored safely before use
+      - name: Run test from ${{ matrix.region_label }}
         run: |
-          # This line uses your EXISTING test files based on the user's selection
-          TEST_PATH="tests/performance/${{ github.event.inputs.test_type }}/dummyjson-${{ github.event.inputs.test_type }}.js"
-          echo "Running test: $TEST_PATH"
+          # Store the workflow input in a clean shell variable first
+          TEST_TYPE="${{ github.event.inputs.test_type }}"
+          # Construct the path to your existing test file
+          TEST_PATH="tests/performance/$TEST_TYPE/dummyjson-$TEST_TYPE.js"
           
+          echo "📁 Running existing test: $TEST_PATH"
+          echo "📍 Region: ${{ matrix.region_label }}"
+          
+          # Execute the test. The script is unchanged.
           k6 run "$TEST_PATH" \
-            --out json=results-${{ matrix.region_label }}.json \
-            --summary-export=summary-${{ matrix.region_label }}.json 2>&1 | tee output-${{ matrix.region_label }}.txt
+            --out json="results-${{ matrix.region_label }}.json" \
+            --summary-export="summary-${{ matrix.region_label }}.json" \
+            2>&1 | tee "output-${{ matrix.region_label }}.txt"
 
-      - name: Upload results
+      - name: Upload results for this region
         uses: actions/upload-artifact@v4
         with:
           name: results-${{ matrix.region_label }}-${{ github.event.inputs.test_type }}
           path: |
             results-${{ matrix.region_label }}.json
             summary-${{ matrix.region_label }}.json
+            output-${{ matrix.region_label }}.txt
 
   combine-report:
     runs-on: ubuntu-latest
-    needs: test-regions
-
+    needs: test-regions # Waits for all regional tests to finish
+    # Install 'jq' for reliable JSON parsing in the report
     steps:
-      - name: Download all results
+      - name: Install jq for JSON parsing
+        run: sudo apt-get update && sudo apt-get install -y jq
+
+      - name: Download all regional results
         uses: actions/download-artifact@v4
         with:
           path: all-results
 
-      - name: Create regional report
+      - name: Create combined regional report
         run: |
-          echo "# 🌍 Regional Test: ${{ github.event.inputs.test_type }}" > REPORT.md
-          echo "**Comparison of the same test run from different GitHub runners.**" >> REPORT.md
-          echo "" >> REPORT.md
-          echo "| Region | Avg Response Time | 95th Percentile (p95) | Error Rate |" >> REPORT.md
-          echo "|--------|-------------------|------------------------|------------|" >> REPORT.md
+          echo "# 🌍 Regional Performance Comparison" > REGIONAL_REPORT.md
+          echo "**Test:** ${{ github.event.inputs.test_type }}" >> REGIONAL_REPORT.md
+          echo "**Generated:** $(date)" >> REGIONAL_REPORT.md
+          echo "" >> REGIONAL_REPORT.md
+          echo "## Results Summary" >> REGIONAL_REPORT.md
+          echo "" >> REGIONAL_REPORT.md
+          echo "| Region | Avg Latency | p95 Latency | Error Rate | Virtual Users (Max) |" >> REGIONAL_REPORT.md
+          echo "|--------|-------------|-------------|------------|---------------------|" >> REGIONAL_REPORT.md
           
-          # Simple text processing to extract data. For a real report, you'd use jq.
-          for file in all-results/results-*/summary-*.json; do
-            REGION=$(echo "$file" | grep -o "results-[^/]*" | cut -d'-' -f2-)
-            echo "| $REGION | (Data from JSON) | (Data from JSON) | (Data from JSON) |" >> REPORT.md
+          # Process each region's summary file
+          for summary_file in all-results/results-*/summary-*.json; do
+            # Extract the region label from the directory name
+            REGION_DIR=$(dirname "$summary_file")
+            REGION=$(basename "$REGION_DIR" | cut -d'-' -f2- | sed 's/--/-/g')
+            
+            # Use jq to safely extract metrics, with fallbacks
+            AVG_MS=$(jq -r '.metrics.http_req_duration.values.avg // "N/A"' "$summary_file" 2>/dev/null)
+            P95_MS=$(jq -r '.metrics.http_req_duration.values."p(95)" // "N/A"' "$summary_file" 2>/dev/null)
+            ERROR_RATE=$(jq -r '.metrics.http_req_failed.values.rate // "0"' "$summary_file" 2>/dev/null)
+            MAX_VUS=$(jq -r '.metrics.vus.values.max // "N/A"' "$summary_file" 2>/dev/null)
+            
+            # Format error rate as a percentage
+            ERROR_PERCENT=$(echo "scale=2; $ERROR_RATE * 100" | bc 2>/dev/null || echo "0.00")
+            
+            echo "| $REGION | ${AVG_MS}ms | ${P95_MS}ms | ${ERROR_PERCENT}% | $MAX_VUS |" >> REGIONAL_REPORT.md
           done
           
-          cat REPORT.md
+          echo "" >> REGIONAL_REPORT.md
+          echo "---" >> REGIONAL_REPORT.md
+          echo "*Note:** This test ran the **exact same k6 script** from different GitHub-hosted runners to compare network latency and regional performance.*" >> REGIONAL_REPORT.md
+          
+          # Display the report in the workflow log
+          cat REGIONAL_REPORT.md
 
-      - name: Upload final report
+      - name: Upload final combined report
         uses: actions/upload-artifact@v4
         with:
-          name: regional-${{ github.event.inputs.test_type }}-report
+          name: regional-comparison-report
           path: |
-            REPORT.md
+            REGIONAL_REPORT.md
             all-results/
