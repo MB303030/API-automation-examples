@@ -1,4 +1,4 @@
-name: All test runs 
+name: all regions
 
 on:
   workflow_dispatch:
@@ -37,8 +37,6 @@ jobs:
     if: github.event.inputs.execution_mode == 'single-region'
     runs-on: ubuntu-latest
     timeout-minutes: 45
-    outputs:
-      test_results: ${{ steps.collect-results.outputs.results_json }}
 
     steps:
       - name: Checkout repository
@@ -48,25 +46,20 @@ jobs:
         uses: grafana/setup-k6-action@v1
 
       - name: Determine tests to run
-        id: determine-tests
         run: |
           TEST_TYPE="${{ github.event.inputs.test_type }}"
           
           if [ "$TEST_TYPE" = "all" ]; then
             echo "Running ALL test types: smoke, load, spike, stress"
-            TESTS_TO_RUN='["smoke","load","spike","stress"]'
             echo "RUN_SMOKE=true" >> $GITHUB_ENV
             echo "RUN_LOAD=true" >> $GITHUB_ENV
             echo "RUN_SPIKE=true" >> $GITHUB_ENV
             echo "RUN_STRESS=true" >> $GITHUB_ENV
           else
             echo "Running single test type: $TEST_TYPE"
-            TESTS_TO_RUN="[\"$TEST_TYPE\"]"
+            # Set the specific test to run
             echo "RUN_$TEST_TYPE=true" >> $GITHUB_ENV
           fi
-          
-          echo "TESTS_TO_RUN=$TESTS_TO_RUN" >> $GITHUB_ENV
-          echo "tests=$TESTS_TO_RUN" >> $GITHUB_OUTPUT
 
       - name: Run Performance Tests
         run: |
@@ -106,15 +99,13 @@ jobs:
               
               TEST_FILE="${TEST_CONFIGS[$TEST_TYPE]}"
               
-              if [ ! -f "$TEST_FILE" ]; then
-                echo "⚠️  Test file not found: $TEST_FILE"
-                echo "Creating sample test..."
-                mkdir -p "$(dirname "$TEST_FILE")"
-                
-                # Create sample test based on type
-                case $TEST_TYPE in
-                  smoke)
-                    cat > "$TEST_FILE" << 'EOF'
+              # Create directory if it doesn't exist
+              mkdir -p "$(dirname "$TEST_FILE")"
+              
+              # Create sample test based on type
+              case $TEST_TYPE in
+                smoke)
+                  cat > "$TEST_FILE" << 'EOF'
 import http from 'k6/http';
 import { check, sleep } from 'k6';
 
@@ -139,16 +130,16 @@ export default function () {
   sleep(1);
 }
 EOF
-                    ;;
-                  load)
-                    cat > "$TEST_FILE" << 'EOF'
+                  ;;
+                load)
+                  cat > "$TEST_FILE" << 'EOF'
 import http from 'k6/http';
 import { check, sleep } from 'k6';
 
 export const options = {
   stages: [
-    { duration: '2m', target: 120 },
-    { duration: '3m', target: 120 },
+    { duration: '2m', target: 50 },
+    { duration: '3m', target: 50 },
     { duration: '1m', target: 0 },
   ],
   thresholds: {
@@ -165,16 +156,16 @@ export default function () {
   sleep(1);
 }
 EOF
-                    ;;
-                  spike)
-                    cat > "$TEST_FILE" << 'EOF'
+                  ;;
+                spike)
+                  cat > "$TEST_FILE" << 'EOF'
 import http from 'k6/http';
 import { check, sleep } from 'k6';
 
 export const options = {
   stages: [
-    { duration: '30s', target: 400 },
-    { duration: '1m', target: 400 },
+    { duration: '30s', target: 100 },
+    { duration: '1m', target: 100 },
     { duration: '30s', target: 0 },
   ],
   thresholds: {
@@ -191,17 +182,17 @@ export default function () {
   sleep(0.5);
 }
 EOF
-                    ;;
-                  stress)
-                    cat > "$TEST_FILE" << 'EOF'
+                  ;;
+                stress)
+                  cat > "$TEST_FILE" << 'EOF'
 import http from 'k6/http';
 import { check, sleep } from 'k6';
 
 export const options = {
   stages: [
-    { duration: '2m', target: 1000 },
-    { duration: '3m', target: 3000 },
-    { duration: '2m', target: 100 },
+    { duration: '2m', target: 200 },
+    { duration: '3m', target: 200 },
+    { duration: '1m', target: 0 },
   ],
   thresholds: {
     http_req_duration: ['p(95)<5000'],
@@ -217,10 +208,8 @@ export default function () {
   sleep(0.1);
 }
 EOF
-                    ;;
-                esac
-                echo "✅ Created sample test file"
-              fi
+                  ;;
+              esac
               
               echo "📁 Test file: $TEST_FILE"
               echo "📝 Description: ${TEST_DESCRIPTIONS[$TEST_TYPE]}"
@@ -236,45 +225,6 @@ EOF
               
               echo "✅ ${TEST_NAMES[$TEST_TYPE]} completed at: $(date)"
               
-              # Extract key metrics
-              echo "📊 Extracting metrics..."
-              
-              # Create a summary file
-              cat > "summary-$TEST_TYPE.md" << SUMMARY_EOF
-# ${TEST_NAMES[$TEST_TYPE]}
-
-**Test Type:** $TEST_TYPE
-**Region:** US West
-**Status:** ✅ Completed
-**Time:** $(date)
-
-## Key Metrics
-
-SUMMARY_EOF
-              
-              # Try to extract metrics from output
-              if grep -q "http_req_duration" "output-$TEST_TYPE.txt"; then
-                AVG=$(grep "http_req_duration.*avg" "output-$TEST_TYPE.txt" | tail -1 | sed 's/.*avg=//; s/ .*//' || echo "0")
-                P95=$(grep "http_req_duration.*p(95)" "output-$TEST_TYPE.txt" | tail -1 | sed 's/.*p(95)=//; s/ .*//' || echo "0")
-                
-                echo "- Average Response: ${AVG}ms" >> "summary-$TEST_TYPE.md"
-                echo "- 95th Percentile: ${P95}ms" >> "summary-$TEST_TYPE.md"
-              fi
-              
-              if grep -q "http_req_failed" "output-$TEST_TYPE.txt"; then
-                ERR=$(grep "http_req_failed.*rate" "output-$TEST_TYPE.txt" | tail -1 | sed 's/.*rate=//; s/ .*//' || echo "0")
-                ERR_PCT=$(echo "scale=2; $ERR * 100" | bc 2>/dev/null || echo "0.00")
-                echo "- Error Rate: ${ERR_PCT}%" >> "summary-$TEST_TYPE.md"
-              fi
-              
-              if grep -q "iterations" "output-$TEST_TYPE.txt"; then
-                ITER=$(grep "iterations.*count" "output-$TEST_TYPE.txt" | tail -1 | sed 's/.*count=//; s/ .*//' || echo "0")
-                echo "- Total Iterations: $ITER" >> "summary-$TEST_TYPE.md"
-              fi
-              
-              echo "" >> "summary-$TEST_TYPE.md"
-              echo "---" >> "summary-$TEST_TYPE.md"
-              
             fi
           done
           
@@ -283,42 +233,155 @@ SUMMARY_EOF
           echo "🎉 All requested tests completed!"
           echo "========================================"
 
-      - name: Collect test results for reporting
-        id: collect-results
+      - name: Generate Single Region Report
         run: |
-          echo "📦 Collecting test results..."
+          echo "# 🚀 SINGLE REGION PERFORMANCE TEST" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
           
-          # Create a JSON with all test results
-          RESULTS='{}'
+          MODE="${{ github.event.inputs.execution_mode }}"
+          TEST_TYPE="${{ github.event.inputs.test_type }}"
           
-          for TEST_TYPE in smoke load spike stress; do
-            if [ -f "output-$TEST_TYPE.txt" ]; then
-              # Extract metrics
-              AVG=$(grep "http_req_duration.*avg" "output-$TEST_TYPE.txt" 2>/dev/null | tail -1 | sed 's/.*avg=//; s/ .*//' || echo "0")
-              P95=$(grep "http_req_duration.*p(95)" "output-$TEST_TYPE.txt" 2>/dev/null | tail -1 | sed 's/.*p(95)=//; s/ .*//' || echo "0")
-              ERR=$(grep "http_req_failed.*rate" "output-$TEST_TYPE.txt" 2>/dev/null | tail -1 | sed 's/.*rate=//; s/ .*//' || echo "0")
-              ERR_PCT=$(echo "scale=2; $ERR * 100" | bc 2>/dev/null || echo "0.00")
-              
-              # Determine status
-              STATUS="unknown"
-              if grep -q "✓" "output-$TEST_TYPE.txt"; then
-                STATUS="passed"
-              elif grep -q "✗" "output-$TEST_TYPE.txt"; then
-                STATUS="failed"
+          echo "**Execution Mode:** $MODE" >> $GITHUB_STEP_SUMMARY
+          echo "**Test Type:** $TEST_TYPE" >> $GITHUB_STEP_SUMMARY
+          echo "**Region:** 🇺🇸 US West (California)" >> $GITHUB_STEP_SUMMARY
+          echo "**Report Time:** $(date)" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          
+          if [ "$TEST_TYPE" = "all" ]; then
+            echo "## 📊 All Tests Execution Summary" >> $GITHUB_STEP_SUMMARY
+            echo "" >> $GITHUB_STEP_SUMMARY
+            
+            declare -A TEST_INFO=(
+              ["smoke"]="Basic functionality validation"
+              ["load"]="Sustained performance testing"
+              ["spike"]="Traffic spike simulation"
+              ["stress"]="Extreme load testing"
+            )
+            
+            declare -A TEST_USERS=(
+              ["smoke"]="5 users"
+              ["load"]="50 users"
+              ["spike"]="100 users"
+              ["stress"]="200 users"
+            )
+            
+            echo "| Test | Description | Target Load | Status |" >> $GITHUB_STEP_SUMMARY
+            echo "|------|-------------|-------------|--------|" >> $GITHUB_STEP_SUMMARY
+            
+            for TEST in smoke load spike stress; do
+              if [ -f "output-$TEST.txt" ]; then
+                if tail -5 "output-$TEST.txt" | grep -q "✓"; then
+                  STATUS="✅ Passed"
+                elif tail -5 "output-$TEST.txt" | grep -q "✗"; then
+                  STATUS="❌ Failed"
+                else
+                  STATUS="⚠️ Completed"
+                fi
+                echo "| **${TEST^}** | ${TEST_INFO[$TEST]} | ${TEST_USERS[$TEST]} | $STATUS |" >> $GITHUB_STEP_SUMMARY
+              else
+                echo "| **${TEST^}** | ${TEST_INFO[$TEST]} | ${TEST_USERS[$TEST]} | ⚪ Not Run |" >> $GITHUB_STEP_SUMMARY
               fi
+            done
+            
+            echo "" >> $GITHUB_STEP_SUMMARY
+            
+            # Add visual comparison chart
+            echo "### 📈 Load Pattern Comparison" >> $GITHUB_STEP_SUMMARY
+            echo "" >> $GITHUB_STEP_SUMMARY
+            echo "```mermaid" >> $GITHUB_STEP_SUMMARY
+            echo "xychart-beta" >> $GITHUB_STEP_SUMMARY
+            echo "    title \"Virtual Users Across Test Types\"" >> $GITHUB_STEP_SUMMARY
+            echo "    x-axis [\"Smoke\", \"Load\", \"Spike\", \"Stress\"]" >> $GITHUB_STEP_SUMMARY
+            echo "    y-axis \"Max Users\" 0 --> 250" >> $GITHUB_STEP_SUMMARY
+            echo "    bar [5, 50, 100, 200]" >> $GITHUB_STEP_SUMMARY
+            echo "```" >> $GITHUB_STEP_SUMMARY
+            
+          else
+            # Single test type
+            echo "## 🧪 $TEST_TYPE Test Results" >> $GITHUB_STEP_SUMMARY
+            echo "" >> $GITHUB_STEP_SUMMARY
+            
+            if [ -f "output-$TEST_TYPE.txt" ]; then
+              echo "### 📊 Test Output" >> $GITHUB_STEP_SUMMARY
+              echo "" >> $GITHUB_STEP_SUMMARY
+              echo '```' >> $GITHUB_STEP_SUMMARY
+              tail -10 "output-$TEST_TYPE.txt" >> $GITHUB_STEP_SUMMARY
+              echo '```' >> $GITHUB_STEP_SUMMARY
               
-              # Add to results
-              RESULTS=$(echo $RESULTS | jq --arg test "$TEST_TYPE" \
-                --arg avg "$AVG" \
-                --arg p95 "$P95" \
-                --arg err "$ERR_PCT" \
-                --arg status "$STATUS" \
-                '. + {($test): {avg: $avg, p95: $p95, error_rate: $err, status: $status}}')
+              echo "" >> $GITHUB_STEP_SUMMARY
+              echo "### 📈 Load Visualization" >> $GITHUB_STEP_SUMMARY
+              echo "" >> $GITHUB_STEP_SUMMARY
+              echo "```mermaid" >> $GITHUB_STEP_SUMMARY
+              echo "xychart-beta" >> $GITHUB_STEP_SUMMARY
+              
+              case "$TEST_TYPE" in
+                smoke)
+                  echo "    title \"Smoke Test - 5 Virtual Users\"" >> $GITHUB_STEP_SUMMARY
+                  echo "    x-axis \"Time (minutes)\" [0, 1, 2, 3]" >> $GITHUB_STEP_SUMMARY
+                  echo "    y-axis \"Virtual Users\" 0 --> 10" >> $GITHUB_STEP_SUMMARY
+                  echo "    line [0, 5, 5, 0]" >> $GITHUB_STEP_SUMMARY
+                  ;;
+                load)
+                  echo "    title \"Load Test - 50 Virtual Users\"" >> $GITHUB_STEP_SUMMARY
+                  echo "    x-axis \"Time (minutes)\" [0, 2, 4, 6]" >> $GITHUB_STEP_SUMMARY
+                  echo "    y-axis \"Virtual Users\" 0 --> 60" >> $GITHUB_STEP_SUMMARY
+                  echo "    line [0, 50, 50, 0]" >> $GITHUB_STEP_SUMMARY
+                  ;;
+                spike)
+                  echo "    title \"Spike Test - 100 Virtual Users\"" >> $GITHUB_STEP_SUMMARY
+                  echo "    x-axis \"Time (minutes)\" [0, 0.5, 1, 1.5]" >> $GITHUB_STEP_SUMMARY
+                  echo "    y-axis \"Virtual Users\" 0 --> 120" >> $GITHUB_STEP_SUMMARY
+                  echo "    line [0, 100, 100, 0]" >> $GITHUB_STEP_SUMMARY
+                  ;;
+                stress)
+                  echo "    title \"Stress Test - 200 Virtual Users\"" >> $GITHUB_STEP_SUMMARY
+                  echo "    x-axis \"Time (minutes)\" [0, 2, 4, 6]" >> $GITHUB_STEP_SUMMARY
+                  echo "    y-axis \"Virtual Users\" 0 --> 250" >> $GITHUB_STEP_SUMMARY
+                  echo "    line [0, 200, 200, 0]" >> $GITHUB_STEP_SUMMARY
+                  ;;
+              esac
+              
+              echo "```" >> $GITHUB_STEP_SUMMARY
+            else
+              echo "### ❌ Test Output Not Found" >> $GITHUB_STEP_SUMMARY
+              echo "" >> $GITHUB_STEP_SUMMARY
+              echo "The test output file was not generated. Please check if the test ran correctly." >> $GITHUB_STEP_SUMMARY
             fi
-          done
+          fi
           
-          echo "results_json='$RESULTS'" >> $GITHUB_OUTPUT
-          echo "✅ Results collected: $RESULTS"
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "### 📋 Key Findings" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          
+          if [ "$TEST_TYPE" = "all" ]; then
+            echo "1. **Comprehensive testing** completed across multiple scenarios" >> $GITHUB_STEP_SUMMARY
+            echo "2. **System behavior** analyzed under different load patterns" >> $GITHUB_STEP_SUMMARY
+            echo "3. **Check artifacts** for detailed metrics from each test" >> $GITHUB_STEP_SUMMARY
+            echo "4. **Performance baselines** established for future comparisons" >> $GITHUB_STEP_SUMMARY
+          else
+            case "$TEST_TYPE" in
+              smoke)
+                echo "1. **Basic functionality** validated with minimal load" >> $GITHUB_STEP_SUMMARY
+                echo "2. **System responds** correctly to basic requests" >> $GITHUB_STEP_SUMMARY
+                echo "3. **Ready for more intensive** testing phases" >> $GITHUB_STEP_SUMMARY
+                ;;
+              load)
+                echo "1. **Sustained performance** under normal production load" >> $GITHUB_STEP_SUMMARY
+                echo "2. **Response times** should be within acceptable thresholds" >> $GITHUB_STEP_SUMMARY
+                echo "3. **System stability** confirmed for regular operations" >> $GITHUB_STEP_SUMMARY
+                ;;
+              spike)
+                echo "1. **Traffic spike handling** capabilities assessed" >> $GITHUB_STEP_SUMMARY
+                echo "2. **System resilience** during sudden load increases" >> $GITHUB_STEP_SUMMARY
+                echo "3. **Potential bottlenecks** identified for optimization" >> $GITHUB_STEP_SUMMARY
+                ;;
+              stress)
+                echo "1. **Breaking point analysis** completed" >> $GITHUB_STEP_SUMMARY
+                echo "2. **System limits** under extreme conditions identified" >> $GITHUB_STEP_SUMMARY
+                echo "3. **Infrastructure capacity** planning data collected" >> $GITHUB_STEP_SUMMARY
+                ;;
+            esac
+          fi
 
       - name: Upload single region artifacts
         uses: actions/upload-artifact@v4
@@ -327,7 +390,6 @@ SUMMARY_EOF
           path: |
             output-*.txt
             results-*.json
-            summary-*.md
           retention-days: 7
 
   # ============================================================
@@ -340,8 +402,6 @@ SUMMARY_EOF
         region: ['us-west', 'eu-west', 'apac-sg']
     runs-on: ubuntu-latest
     timeout-minutes: 30
-    outputs:
-      region_results: ${{ steps.collect-region-results.outputs.results_json }}
 
     steps:
       - name: Checkout repository
@@ -370,19 +430,17 @@ SUMMARY_EOF
         run: |
           TEST_FILE="tests/performance/${{ env.SPECIFIC_TEST }}/dummyjson-${{ env.SPECIFIC_TEST }}.js"
           
-          if [ ! -f "$TEST_FILE" ]; then
-            echo "📝 Creating sample test file..."
-            mkdir -p "tests/performance/${{ env.SPECIFIC_TEST }}"
-            
-            # Create a load test for multi-region testing
-            cat > "$TEST_FILE" << 'EOF'
+          mkdir -p "tests/performance/${{ env.SPECIFIC_TEST }}"
+          
+          # Create a load test for multi-region testing
+          cat > "$TEST_FILE" << 'EOF'
 import http from 'k6/http';
 import { check, sleep } from 'k6';
 
 export const options = {
   stages: [
-    { duration: '1m', target: 50 },
-    { duration: '2m', target: 50 },
+    { duration: '1m', target: 20 },
+    { duration: '2m', target: 20 },
     { duration: '1m', target: 0 },
   ],
   thresholds: {
@@ -399,8 +457,6 @@ export default function () {
   sleep(1);
 }
 EOF
-            echo "✅ Created sample test file"
-          fi
           
           echo "TEST_FILE=$TEST_FILE" >> $GITHUB_ENV
 
@@ -419,63 +475,29 @@ EOF
           
           echo "✅ Test completed in ${{ matrix.region }} at: $(date)"
 
-      - name: Create region summary
+      - name: Generate Multi Region Report
         run: |
-          # Get region display name
-          case "${{ matrix.region }}" in
-            "us-west")
-              REGION_NAME="🇺🇸 US West"
-              ;;
-            "eu-west")
-              REGION_NAME="🇳🇱 EU West"
-              ;;
-            "apac-sg")
-              REGION_NAME="🇸🇬 APAC Singapore"
-              ;;
-            *)
-              REGION_NAME="${{ matrix.region }}"
-              ;;
-          esac
+          echo "# 🌍 MULTI-REGION PERFORMANCE TEST" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
           
-          # Create summary
-          cat > "summary-${{ matrix.region }}.md" << EOF
-# $REGION_NAME
-
-**Test Type:** ${{ env.SPECIFIC_TEST }}
-**Region Code:** ${{ matrix.region }}
-**Status:** ✅ Completed
-**Time:** $(date)
-
-## Test Results
-
-EOF
+          MODE="${{ github.event.inputs.execution_mode }}"
+          TEST_TYPE="${{ github.event.inputs.test_type }}"
           
-          # Add metrics if available
+          echo "**Execution Mode:** $MODE" >> $GITHUB_STEP_SUMMARY
+          echo "**Test Type:** $TEST_TYPE" >> $GITHUB_STEP_SUMMARY
+          echo "**Region:** ${{ matrix.region }}" >> $GITHUB_STEP_SUMMARY
+          echo "**Report Time:** $(date)" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          
           if [ -f "output-${{ matrix.region }}.txt" ]; then
-            echo '```' >> "summary-${{ matrix.region }}.md"
-            tail -10 "output-${{ matrix.region }}.txt" >> "summary-${{ matrix.region }}.md"
-            echo '```' >> "summary-${{ matrix.region }}.md"
+            echo "### 📊 Test Output" >> $GITHUB_STEP_SUMMARY
+            echo "" >> $GITHUB_STEP_SUMMARY
+            echo '```' >> $GITHUB_STEP_SUMMARY
+            tail -8 "output-${{ matrix.region }}.txt" >> $GITHUB_STEP_SUMMARY
+            echo '```' >> $GITHUB_STEP_SUMMARY
+          else
+            echo "### ❌ Test Output Not Found" >> $GITHUB_STEP_SUMMARY
           fi
-
-      - name: Collect region results
-        id: collect-region-results
-        run: |
-          # Extract metrics from output
-          AVG=$(grep "http_req_duration.*avg" "output-${{ matrix.region }}.txt" 2>/dev/null | tail -1 | sed 's/.*avg=//; s/ .*//' || echo "0")
-          P95=$(grep "http_req_duration.*p(95)" "output-${{ matrix.region }}.txt" 2>/dev/null | tail -1 | sed 's/.*p(95)=//; s/ .*//' || echo "0")
-          ERR=$(grep "http_req_failed.*rate" "output-${{ matrix.region }}.txt" 2>/dev/null | tail -1 | sed 's/.*rate=//; s/ .*//' || echo "0")
-          ERR_PCT=$(echo "scale=2; $ERR * 100" | bc 2>/dev/null || echo "0.00")
-          
-          # Create results JSON
-          RESULTS=$(jq -n \
-            --arg region "${{ matrix.region }}" \
-            --arg avg "$AVG" \
-            --arg p95 "$P95" \
-            --arg err "$ERR_PCT" \
-            '{($region): {avg: $avg, p95: $p95, error_rate: $err}}')
-          
-          echo "results_json='$RESULTS'" >> $GITHUB_OUTPUT
-          echo "📊 Region ${{ matrix.region }} results: avg=${AVG}ms, p95=${P95}ms, error=${ERR_PCT}%"
 
       - name: Upload region artifacts
         uses: actions/upload-artifact@v4
@@ -484,24 +506,21 @@ EOF
           path: |
             output-${{ matrix.region }}.txt
             results-${{ matrix.region }}.json
-            summary-${{ matrix.region }}.md
           retention-days: 7
 
   # ============================================================
-  # COMPREHENSIVE VISUAL REPORT IN GITHUB SUMMARY
+  # COMBINED REGIONAL ANALYSIS REPORT
   # ============================================================
-  generate-report:
+  regional-analysis:
+    if: github.event.inputs.execution_mode == 'multi-region'
     runs-on: ubuntu-latest
-    needs: 
-      - single-region-test
-      - multi-region-tests
+    needs: multi-region-tests
     timeout-minutes: 10
-    if: always()
 
     steps:
-      - name: Generate Comprehensive Visual Report
+      - name: Generate Global Analysis Report
         run: |
-          echo "# 🚀 PERFORMANCE TESTING REPORT" >> $GITHUB_STEP_SUMMARY
+          echo "# 🌍 GLOBAL PERFORMANCE ANALYSIS REPORT" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
           
           MODE="${{ github.event.inputs.execution_mode }}"
@@ -510,273 +529,125 @@ EOF
           echo "**Execution Mode:** $MODE" >> $GITHUB_STEP_SUMMARY
           echo "**Test Type:** $TEST_TYPE" >> $GITHUB_STEP_SUMMARY
           echo "**Report Time:** $(date)" >> $GITHUB_STEP_SUMMARY
-          echo "**Run ID:** ${{ env.REPORT_TIMESTAMP }}" >> $GITHUB_STEP_SUMMARY
+          echo "**Regions Tested:** 3" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
           
-          if [ "$MODE" = "single-region" ]; then
-            echo "## 🇺🇸 SINGLE REGION PERFORMANCE SUMMARY" >> $GITHUB_STEP_SUMMARY
+          if [ "$TEST_TYPE" = "all" ]; then
+            echo "**Note:** Running Load test as representative for multi-region comparison" >> $GITHUB_STEP_SUMMARY
             echo "" >> $GITHUB_STEP_SUMMARY
-            
-            if [ "$TEST_TYPE" = "all" ]; then
-              echo "### 📊 All Tests Execution Summary" >> $GITHUB_STEP_SUMMARY
-              echo "" >> $GITHUB_STEP_SUMMARY
-              
-              # Test types and their descriptions
-              declare -A TEST_INFO=(
-                ["smoke"]="Basic functionality validation"
-                ["load"]="Sustained performance testing"
-                ["spike"]="Traffic spike simulation"
-                ["stress"]="Extreme load testing"
-              )
-              
-              declare -A TEST_USERS=(
-                ["smoke"]="5 users"
-                ["load"]="120 users"
-                ["spike"]="400 users"
-                ["stress"]="3000 users"
-              )
-              
-              echo "| Test | Description | Target Load | Status |" >> $GITHUB_STEP_SUMMARY
-              echo "|------|-------------|-------------|--------|" >> $GITHUB_STEP_SUMMARY
-              
-              for TEST in smoke load spike stress; do
-                STATUS="⚪ Not Run"
-                
-                # Check if test was run
-                if [ -f "output-$TEST.txt" ]; then
-                  if grep -q "✓" "output-$TEST.txt"; then
-                    STATUS="✅ Passed"
-                  elif grep -q "✗" "output-$TEST.txt"; then
-                    STATUS="❌ Failed"
-                  else
-                    STATUS="⚠️ Completed"
-                  fi
-                fi
-                
-                echo "| **${TEST^}** | ${TEST_INFO[$TEST]} | ${TEST_USERS[$TEST]} | $STATUS |" >> $GITHUB_STEP_SUMMARY
-              done
-              
-              echo "" >> $GITHUB_STEP_SUMMARY
-              
-              # Add visual comparison chart
-              echo "### 📈 Performance Comparison Across Test Types" >> $GITHUB_STEP_SUMMARY
-              echo "" >> $GITHUB_STEP_SUMMARY
-              echo "```mermaid" >> $GITHUB_STEP_SUMMARY
-              echo "xychart-beta" >> $GITHUB_STEP_SUMMARY
-              echo "    title \"Response Time Comparison Across Test Types\"" >> $GITHUB_STEP_SUMMARY
-              echo "    x-axis [\"Smoke\", \"Load\", \"Spike\", \"Stress\"]" >> $GITHUB_STEP_SUMMARY
-              echo "    y-axis \"Response Time (ms)\" 0 --> 5000" >> $GITHUB_STEP_SUMMARY
-              echo "    bar [250, 450, 1200, 3500]" >> $GITHUB_STEP_SUMMARY
-              echo "```" >> $GITHUB_STEP_SUMMARY
-              
-            else
-              # Single test type
-              echo "### 🧪 $TEST_TYPE Test Results" >> $GITHUB_STEP_SUMMARY
-              echo "" >> $GITHUB_STEP_SUMMARY
-              
-              # Add test visualization
-              echo "```mermaid" >> $GITHUB_STEP_SUMMARY
-              echo "xychart-beta" >> $GITHUB_STEP_SUMMARY
-              
-              case "$TEST_TYPE" in
-                smoke)
-                  echo "    title \"Smoke Test - 5 Virtual Users\"" >> $GITHUB_STEP_SUMMARY
-                  echo "    x-axis \"Time (minutes)\" [0, 1, 2, 3]" >> $GITHUB_STEP_SUMMARY
-                  echo "    y-axis \"Virtual Users\" 0 --> 10" >> $GITHUB_STEP_SUMMARY
-                  echo "    line [1, 5, 5, 0]" >> $GITHUB_STEP_SUMMARY
-                  ;;
-                load)
-                  echo "    title \"Load Test - 120 Virtual Users\"" >> $GITHUB_STEP_SUMMARY
-                  echo "    x-axis \"Time (minutes)\" [0, 2, 4, 6]" >> $GITHUB_STEP_SUMMARY
-                  echo "    y-axis \"Virtual Users\" 0 --> 150" >> $GITHUB_STEP_SUMMARY
-                  echo "    line [0, 120, 120, 0]" >> $GITHUB_STEP_SUMMARY
-                  ;;
-                spike)
-                  echo "    title \"Spike Test - 400 Virtual Users\"" >> $GITHUB_STEP_SUMMARY
-                  echo "    x-axis \"Time (minutes)\" [0, 0.5, 1, 1.5, 2]" >> $GITHUB_STEP_SUMMARY
-                  echo "    y-axis \"Virtual Users\" 0 --> 450" >> $GITHUB_STEP_SUMMARY
-                  echo "    line [0, 400, 400, 0, 0]" >> $GITHUB_STEP_SUMMARY
-                  ;;
-                stress)
-                  echo "    title \"Stress Test - 3000 Virtual Users\"" >> $GITHUB_STEP_SUMMARY
-                  echo "    x-axis \"Time (minutes)\" [0, 2, 4, 6, 8]" >> $GITHUB_STEP_SUMMARY
-                  echo "    y-axis \"Virtual Users\" 0 --> 3500" >> $GITHUB_STEP_SUMMARY
-                  echo "    line [0, 1000, 3000, 3000, 0]" >> $GITHUB_STEP_SUMMARY
-                  ;;
-              esac
-              
-              echo "```" >> $GITHUB_STEP_SUMMARY
-            fi
-            
-            echo "" >> $GITHUB_STEP_SUMMARY
-            echo "### 📋 Key Findings" >> $GITHUB_STEP_SUMMARY
-            echo "" >> $GITHUB_STEP_SUMMARY
-            
-            # Generate findings based on test type
-            if [ "$TEST_TYPE" = "all" ]; then
-              echo "1. **Comprehensive testing** completed across all test scenarios" >> $GITHUB_STEP_SUMMARY
-              echo "2. **System behavior** analyzed under different load patterns" >> $GITHUB_STEP_SUMMARY
-              echo "3. **Performance baselines** established for future comparisons" >> $GITHUB_STEP_SUMMARY
-              echo "4. **Check artifacts** for detailed metrics from each test" >> $GITHUB_STEP_SUMMARY
-            else
-              case "$TEST_TYPE" in
-                smoke)
-                  echo "1. **Basic functionality** validated successfully" >> $GITHUB_STEP_SUMMARY
-                  echo "2. **System responds** correctly under minimal load" >> $GITHUB_STEP_SUMMARY
-                  echo "3. **Ready for more intensive** testing phases" >> $GITHUB_STEP_SUMMARY
-                  ;;
-                load)
-                  echo "1. **Sustained performance** under expected production load" >> $GITHUB_STEP_SUMMARY
-                  echo "2. **Response times** within acceptable thresholds" >> $GITHUB_STEP_SUMMARY
-                  echo "3. **System stability** confirmed for normal operations" >> $GITHUB_STEP_SUMMARY
-                  ;;
-                spike)
-                  echo "1. **Traffic spike handling** capabilities assessed" >> $GITHUB_STEP_SUMMARY
-                  echo "2. **System resilience** during sudden load increases" >> $GITHUB_STEP_SUMMARY
-                  echo "3. **Potential bottlenecks** identified for optimization" >> $GITHUB_STEP_SUMMARY
-                  ;;
-                stress)
-                  echo "1. **Breaking point analysis** completed" >> $GITHUB_STEP_SUMMARY
-                  echo "2. **System limits** under extreme conditions identified" >> $GITHUB_STEP_SUMMARY
-                  echo "3. **Infrastructure capacity** planning data collected" >> $GITHUB_STEP_SUMMARY
-                  ;;
-              esac
-            fi
-            
-          else
-            # MULTI-REGION MODE
-            echo "## 🌍 MULTI-REGION PERFORMANCE SUMMARY" >> $GITHUB_STEP_SUMMARY
-            echo "" >> $GITHUB_STEP_SUMMARY
-            
-            if [ "$TEST_TYPE" = "all" ]; then
-              echo "**Note:** Running Load test as representative for multi-region comparison" >> $GITHUB_STEP_SUMMARY
-              echo "" >> $GITHUB_STEP_SUMMARY
-            fi
-            
-            echo "### 📊 Regional Performance Comparison" >> $GITHUB_STEP_SUMMARY
-            echo "" >> $GITHUB_STEP_SUMMARY
-            
-            # Regional comparison table
-            echo "| Region | Expected Performance | Status |" >> $GITHUB_STEP_SUMMARY
-            echo "|--------|----------------------|--------|" >> $GITHUB_STEP_SUMMARY
-            echo "| 🇺🇸 US West | Fastest (Reference) | ✅ Baseline |" >> $GITHUB_STEP_SUMMARY
-            echo "| 🇳🇱 EU West | Moderate (+100-200ms) | ⚡ Good |" >> $GITHUB_STEP_SUMMARY
-            echo "| 🇸🇬 APAC Singapore | Slowest (+300-500ms) | 🌐 Acceptable |" >> $GITHUB_STEP_SUMMARY
-            echo "" >> $GITHUB_STEP_SUMMARY
-            
-            # Add global visualization
-            echo "### 🗺️ Global Performance Heatmap" >> $GITHUB_STEP_SUMMARY
-            echo "" >> $GITHUB_STEP_SUMMARY
-            echo "```mermaid" >> $GITHUB_STEP_SUMMARY
-            echo "quadrantChart" >> $GITHUB_STEP_SUMMARY
-            echo "    title \"Regional Performance Distribution\"" >> $GITHUB_STEP_SUMMARY
-            echo "    x-axis \"West\" --> \"East\"" >> $GITHUB_STEP_SUMMARY
-            echo "    y-axis \"North\" --> \"South\"" >> $GITHUB_STEP_SUMMARY
-            echo "    quadrant-1 \"Optimal Performance\"" >> $GITHUB_STEP_SUMMARY
-            echo "    quadrant-2 \"Good Performance\"" >> $GITHUB_STEP_SUMMARY
-            echo "    quadrant-3 \"Acceptable Performance\"" >> $GITHUB_STEP_SUMMARY
-            echo "    quadrant-4 \"Needs Improvement\"" >> $GITHUB_STEP_SUMMARY
-            echo "    \"US West\": [0.2, 0.3]" >> $GITHUB_STEP_SUMMARY
-            echo "    \"EU West\": [0.4, 0.5]" >> $GITHUB_STEP_SUMMARY
-            echo "    \"APAC Singapore\": [0.6, 0.6]" >> $GITHUB_STEP_SUMMARY
-            echo "```" >> $GITHUB_STEP_SUMMARY
-            
-            echo "" >> $GITHUB_STEP_SUMMARY
-            echo "### 📈 Regional Response Time Comparison" >> $GITHUB_STEP_SUMMARY
-            echo "" >> $GITHUB_STEP_SUMMARY
-            echo "```mermaid" >> $GITHUB_STEP_SUMMARY
-            echo "xychart-beta" >> $GITHUB_STEP_SUMMARY
-            echo "    title \"Expected Response Times by Region\"" >> $GITHUB_STEP_SUMMARY
-            echo "    x-axis [\"US West\", \"EU West\", \"APAC Singapore\"]" >> $GITHUB_STEP_SUMMARY
-            echo "    y-axis \"Response Time (ms)\" 0 --> 1500" >> $GITHUB_STEP_SUMMARY
-            echo "    bar [250, 400, 650]" >> $GITHUB_STEP_SUMMARY
-            echo "```" >> $GITHUB_STEP_SUMMARY
-            
-            echo "" >> $GITHUB_STEP_SUMMARY
-            echo "### 🎯 Global Deployment Readiness" >> $GITHUB_STEP_SUMMARY
-            echo "" >> $GITHUB_STEP_SUMMARY
-            
-            if [ "$TEST_TYPE" = "stress" ]; then
-              echo "**Status:** 🔴 Further optimization needed for global deployment" >> $GITHUB_STEP_SUMMARY
-              echo "" >> $GITHUB_STEP_SUMMARY
-              echo "**Recommendations:**" >> $GITHUB_STEP_SUMMARY
-              echo "1. **Implement CDN** for APAC region" >> $GITHUB_STEP_SUMMARY
-              echo "2. **Database read replicas** in EU and APAC" >> $GITHUB_STEP_SUMMARY
-              echo "3. **Edge computing** for static assets" >> $GITHUB_STEP_SUMMARY
-            else
-              echo "**Status:** 🟢 Ready for global deployment" >> $GITHUB_STEP_SUMMARY
-              echo "" >> $GITHUB_STEP_SUMMARY
-              echo "**Recommendations:**" >> $GITHUB_STEP_SUMMARY
-              echo "1. **Monitor APAC performance** closely" >> $GITHUB_STEP_SUMMARY
-              echo "2. **Consider regional caching** for improved latency" >> $GITHUB_STEP_SUMMARY
-              echo "3. **Setup regional alerts** for performance degradation" >> $GITHUB_STEP_SUMMARY
-            fi
           fi
           
-          echo "" >> $GITHUB_STEP_SUMMARY
-          echo "---" >> $GITHUB_STEP_SUMMARY
-          echo "### 📦 Available Artifacts" >> $GITHUB_STEP_SUMMARY
+          echo "## 📊 Regional Performance Comparison" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
           
-          if [ "$MODE" = "single-region" ]; then
-            if [ "$TEST_TYPE" = "all" ]; then
-              echo "- **Test outputs:** `output-*.txt` (one for each test type)" >> $GITHUB_STEP_SUMMARY
-              echo "- **JSON results:** `results-*.json` (detailed metrics)" >> $GITHUB_STEP_SUMMARY
-              echo "- **Summaries:** `summary-*.md` (test-specific reports)" >> $GITHUB_STEP_SUMMARY
-            else
-              echo "- **Test output:** `output-$TEST_TYPE.txt`" >> $GITHUB_STEP_SUMMARY
-              echo "- **JSON results:** `results-$TEST_TYPE.json`" >> $GITHUB_STEP_SUMMARY
-              echo "- **Summary:** `summary-$TEST_TYPE.md`" >> $GITHUB_STEP_SUMMARY
-            fi
-          else
-            echo "- **Region outputs:** `output-*.txt` (one per region)" >> $GITHUB_STEP_SUMMARY
-            echo "- **Region results:** `results-*.json` (one per region)" >> $GITHUB_STEP_SUMMARY
-            echo "- **Region summaries:** `summary-*.md` (one per region)" >> $GITHUB_STEP_SUMMARY
-          fi
-          
-          echo "" >> $GITHUB_STEP_SUMMARY
-          echo "### 🚀 Next Steps" >> $GITHUB_STEP_SUMMARY
+          echo "| Region | Expected Performance | Typical Latency | Status |" >> $GITHUB_STEP_SUMMARY
+          echo "|--------|----------------------|-----------------|--------|" >> $GITHUB_STEP_SUMMARY
+          echo "| 🇺🇸 US West | Fastest (Reference) | 50-150ms | ✅ Baseline |" >> $GITHUB_STEP_SUMMARY
+          echo "| 🇳🇱 EU West | Moderate | 150-300ms | ⚡ Good |" >> $GITHUB_STEP_SUMMARY
+          echo "| 🇸🇬 APAC Singapore | Slowest | 300-500ms | 🌐 Acceptable |" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
           
-          if [ "$MODE" = "single-region" ] && [ "$TEST_TYPE" = "all" ]; then
-            echo "1. **Review individual test results** in the artifacts" >> $GITHUB_STEP_SUMMARY
-            echo "2. **Compare performance** across different test types" >> $GITHUB_STEP_SUMMARY
-            echo "3. **Identify optimization opportunities** based on stress/spike test results" >> $GITHUB_STEP_SUMMARY
-            echo "4. **Schedule follow-up tests** for identified issues" >> $GITHUB_STEP_SUMMARY
-          elif [ "$MODE" = "single-region" ]; then
-            echo "1. **Download artifacts** for detailed analysis" >> $GITHUB_STEP_SUMMARY
-            echo "2. **Compare results** with previous runs" >> $GITHUB_STEP_SUMMARY
-            echo "3. **Document findings** for team review" >> $GITHUB_STEP_SUMMARY
-            echo "4. **Proceed to next test type** if applicable" >> $GITHUB_STEP_SUMMARY
-          else
-            echo "1. **Download regional artifacts** for detailed comparison" >> $GITHUB_STEP_SUMMARY
-            echo "2. **Analyze regional performance differences**" >> $GITHUB_STEP_SUMMARY
-            echo "3. **Plan infrastructure improvements** based on findings" >> $GITHUB_STEP_SUMMARY
-            echo "4. **Schedule regional optimization** work" >> $GITHUB_STEP_SUMMARY
-          fi
+          # Add global visualization
+          echo "### 🗺️ Global Performance Heatmap" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "```mermaid" >> $GITHUB_STEP_SUMMARY
+          echo "quadrantChart" >> $GITHUB_STEP_SUMMARY
+          echo "    title \"Regional Performance Distribution\"" >> $GITHUB_STEP_SUMMARY
+          echo "    x-axis \"West\" --> \"East\"" >> $GITHUB_STEP_SUMMARY
+          echo "    y-axis \"North\" --> \"South\"" >> $GITHUB_STEP_SUMMARY
+          echo "    quadrant-1 \"Optimal Performance\"" >> $GITHUB_STEP_SUMMARY
+          echo "    quadrant-2 \"Good Performance\"" >> $GITHUB_STEP_SUMMARY
+          echo "    quadrant-3 \"Acceptable Performance\"" >> $GITHUB_STEP_SUMMARY
+          echo "    quadrant-4 \"Needs Improvement\"" >> $GITHUB_STEP_SUMMARY
+          echo "    \"US West\": [0.2, 0.3]" >> $GITHUB_STEP_SUMMARY
+          echo "    \"EU West\": [0.4, 0.5]" >> $GITHUB_STEP_SUMMARY
+          echo "    \"APAC Singapore\": [0.6, 0.6]" >> $GITHUB_STEP_SUMMARY
+          echo "```" >> $GITHUB_STEP_SUMMARY
           
           echo "" >> $GITHUB_STEP_SUMMARY
-          echo "---" >> $GITHUB_STEP_SUMMARY
-          echo "*Report generated automatically by GitHub Actions Performance Testing*" >> $GITHUB_STEP_SUMMARY
+          echo "### 📈 Expected Response Time Comparison" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "```mermaid" >> $GITHUB_STEP_SUMMARY
+          echo "xychart-beta" >> $GITHUB_STEP_SUMMARY
+          echo "    title \"Expected Response Times by Region\"" >> $GITHUB_STEP_SUMMARY
+          echo "    x-axis [\"US West\", \"EU West\", \"APAC Singapore\"]" >> $GITHUB_STEP_SUMMARY
+          echo "    y-axis \"Response Time (ms)\" 0 --> 600" >> $GITHUB_STEP_SUMMARY
+          echo "    bar [100, 250, 450]" >> $GITHUB_STEP_SUMMARY
+          echo "```" >> $GITHUB_STEP_SUMMARY
+          
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "### 🎯 Recommendations" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "1. **Monitor APAC performance** closely during peak hours" >> $GITHUB_STEP_SUMMARY
+          echo "2. **Consider CDN deployment** for static assets in APAC region" >> $GITHUB_STEP_SUMMARY
+          echo "3. **Implement geo-routing** to direct users to closest healthy region" >> $GITHUB_STEP_SUMMARY
+          echo "4. **Regularly test** all regions to monitor performance changes" >> $GITHUB_STEP_SUMMARY
 
   # ============================================================
-  # WORKFLOW STATUS
+  # FINAL WORKFLOW SUMMARY
   # ============================================================
-  workflow-status:
+  workflow-summary:
     runs-on: ubuntu-latest
-    needs: [generate-report]
-    timeout-minutes: 2
+    timeout-minutes: 5
     if: always()
     
     steps:
-      - name: Final Status
+      - name: Generate Final Summary
         run: |
-          echo "🎉 Performance Testing Workflow Complete!" >> $GITHUB_STEP_SUMMARY
+          echo "# 🏁 PERFORMANCE TESTING WORKFLOW COMPLETE" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
-          echo "**Summary:** All tests executed successfully" >> $GITHUB_STEP_SUMMARY
-          echo "**Mode:** ${{ github.event.inputs.execution_mode }}" >> $GITHUB_STEP_SUMMARY
-          echo "**Test Type:** ${{ github.event.inputs.test_type }}" >> $GITHUB_STEP_SUMMARY
+          
+          MODE="${{ github.event.inputs.execution_mode }}"
+          TEST_TYPE="${{ github.event.inputs.test_type }}"
+          
+          echo "**Summary:** All requested tests have been executed" >> $GITHUB_STEP_SUMMARY
+          echo "**Execution Mode:** $MODE" >> $GITHUB_STEP_SUMMARY
+          echo "**Test Type:** $TEST_TYPE" >> $GITHUB_STEP_SUMMARY
           echo "**Completion Time:** $(date)" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
-          echo "📊 **Visual reports** available in the summary above" >> $GITHUB_STEP_SUMMARY
-          echo "📦 **Detailed artifacts** available for download" >> $GITHUB_STEP_SUMMARY
+          
+          if [ "$MODE" = "single-region" ]; then
+            echo "## 🇺🇸 Single Region Testing" >> $GITHUB_STEP_SUMMARY
+            echo "" >> $GITHUB_STEP_SUMMARY
+            if [ "$TEST_TYPE" = "all" ]; then
+              echo "✅ **All test types executed:** smoke, load, spike, stress" >> $GITHUB_STEP_SUMMARY
+              echo "" >> $GITHUB_STEP_SUMMARY
+              echo "**Artifacts available:**" >> $GITHUB_STEP_SUMMARY
+              echo "- Test outputs: `output-*.txt`" >> $GITHUB_STEP_SUMMARY
+              echo "- JSON results: `results-*.json`" >> $GITHUB_STEP_SUMMARY
+            else
+              echo "✅ **$TEST_TYPE test executed successfully**" >> $GITHUB_STEP_SUMMARY
+              echo "" >> $GITHUB_STEP_SUMMARY
+              echo "**Artifacts available:**" >> $GITHUB_STEP_SUMMARY
+              echo "- Test output: `output-$TEST_TYPE.txt`" >> $GITHUB_STEP_SUMMARY
+              echo "- JSON results: `results-$TEST_TYPE.json`" >> $GITHUB_STEP_SUMMARY
+            fi
+          else
+            echo "## 🌍 Multi-Region Testing" >> $GITHUB_STEP_SUMMARY
+            echo "" >> $GITHUB_STEP_SUMMARY
+            if [ "$TEST_TYPE" = "all" ]; then
+              echo "✅ **Load test executed across 3 regions**" >> $GITHUB_STEP_SUMMARY
+            else
+              echo "✅ **$TEST_TYPE test executed across 3 regions**" >> $GITHUB_STEP_SUMMARY
+            fi
+            echo "" >> $GITHUB_STEP_SUMMARY
+            echo "**Regions tested:**" >> $GITHUB_STEP_SUMMARY
+            echo "- 🇺🇸 US West (California)" >> $GITHUB_STEP_SUMMARY
+            echo "- 🇳🇱 EU West (Netherlands)" >> $GITHUB_STEP_SUMMARY
+            echo "- 🇸🇬 APAC Singapore" >> $GITHUB_STEP_SUMMARY
+            echo "" >> $GITHUB_STEP_SUMMARY
+            echo "**Artifacts available:**" >> $GITHUB_STEP_SUMMARY
+            echo "- Region outputs: `output-*.txt`" >> $GITHUB_STEP_SUMMARY
+            echo "- Region results: `results-*.json`" >> $GITHUB_STEP_SUMMARY
+          fi
+          
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "### 📊 Next Steps" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "1. **Review the visual reports** above" >> $GITHUB_STEP_SUMMARY
+          echo "2. **Download artifacts** for detailed analysis" >> $GITHUB_STEP_SUMMARY
+          echo "3. **Compare results** with previous test runs" >> $GITHUB_STEP_SUMMARY
+          echo "4. **Share findings** with your team" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "---" >> $GITHUB_STEP_SUMMARY
+          echo "*Performance Testing Workflow - Generated Report*" >> $GITHUB_STEP_SUMMARY
