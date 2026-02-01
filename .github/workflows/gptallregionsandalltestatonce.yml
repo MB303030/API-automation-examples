@@ -1,0 +1,215 @@
+name: gpt all regions and all test at once
+
+on:
+  workflow_dispatch:
+    inputs:
+      execution_mode:
+        description: 'Choose testing mode'
+        required: true
+        default: 'single-region'
+        type: choice
+        options:
+          - single-region
+          - multi-region
+      test_type:
+        description: 'Select which performance test to run'
+        required: true
+        default: 'smoke'
+        type: choice
+        options:
+          - smoke
+          - load
+          - spike
+          - stress
+          - all   # run all tests sequentially
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+env:
+  REPORT_TIMESTAMP: ${{ github.run_id }}
+
+jobs:
+  # ============================================================
+  # SINGLE REGION PERFORMANCE TESTING
+  # ============================================================
+  single-region-test:
+    if: github.event.inputs.execution_mode == 'single-region'
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: grafana/setup-k6-action@v1
+
+      - name: Determine tests to run
+        run: |
+          TEST_TYPE="${{ github.event.inputs.test_type }}"
+          echo "TEST_TYPE=$TEST_TYPE" >> $GITHUB_ENV
+          if [ "$TEST_TYPE" = "all" ]; then
+            echo "RUN_ALL=true" >> $GITHUB_ENV
+          else
+            echo "RUN_ALL=false" >> $GITHUB_ENV
+          fi
+
+      - name: Run k6 Performance Tests
+        run: |
+          TESTS=("smoke" "load" "spike" "stress")
+          if [ "${RUN_ALL}" = "true" ]; then
+            for T in "${TESTS[@]}"; do
+              TEST_PATH="tests/performance/$T/dummyjson-$T.js"
+              echo "🚀 Running $T test..."
+              if [ -f "$TEST_PATH" ]; then
+                k6 run "$TEST_PATH" --out json="k6-results-$T.json" --tag region="us-west" 2>&1 | tee "k6-output-$T.txt"
+                echo "# $T Performance Report" > "report-$T.md"
+                cat "k6-output-$T.txt" >> "report-$T.md"
+                cat "report-$T.md" >> $GITHUB_STEP_SUMMARY
+              fi
+            done
+          else
+            T="${TEST_TYPE}"
+            TEST_PATH="tests/performance/$T/dummyjson-$T.js"
+            k6 run "$TEST_PATH" --out json="k6-results.json" --tag region="us-west" 2>&1 | tee k6-output.txt
+            echo "# $T Performance Report" > report.md
+            cat k6-output.txt >> report.md
+            cat report.md >> $GITHUB_STEP_SUMMARY
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: single-region-results
+          path: |
+            k6-output*.txt
+            k6-results*.json
+            report*.md
+
+  # ============================================================
+  # MULTI-REGION PERFORMANCE TESTING
+  # ============================================================
+  multi-region-tests:
+    if: github.event.inputs.execution_mode == 'multi-region'
+    strategy:
+      matrix:
+        region: ['us-west', 'eu-west', 'apac-sg']
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+      - uses: grafana/setup-k6-action@v1
+
+      - name: Determine tests to run
+        run: |
+          TEST_TYPE="${{ github.event.inputs.test_type }}"
+          echo "TEST_TYPE=$TEST_TYPE" >> $GITHUB_ENV
+          if [ "$TEST_TYPE" = "all" ]; then
+            echo "RUN_ALL=true" >> $GITHUB_ENV
+          else
+            echo "RUN_ALL=false" >> $GITHUB_ENV
+          fi
+
+      - name: Run Performance Tests per Region
+        run: |
+          TESTS=("smoke" "load" "spike" "stress")
+          if [ "${RUN_ALL}" = "true" ]; then
+            for T in "${TESTS[@]}"; do
+              TEST_FILE="tests/performance/$T/dummyjson-$T.js"
+              echo "🚀 Running $T test in ${{ matrix.region }}..."
+              if [ -f "$TEST_FILE" ]; then
+                k6 run "$TEST_FILE" --tag region="${{ matrix.region }}" --tag test_type="$T" --out json="results-${{ matrix.region }}-$T.json" 2>&1 | tee "output-${{ matrix.region }}-$T.txt"
+                echo "# $T Test - ${{ matrix.region }}" > "summary-${{ matrix.region }}-$T.md"
+                tail -20 "output-${{ matrix.region }}-$T.txt" >> "summary-${{ matrix.region }}-$T.md"
+              fi
+            done
+          else
+            T="${TEST_TYPE}"
+            TEST_FILE="tests/performance/$T/dummyjson-$T.js"
+            k6 run "$TEST_FILE" --tag region="${{ matrix.region }}" --tag test_type="$T" --out json="results-${{ matrix.region }}.json" 2>&1 | tee "output-${{ matrix.region }}.txt"
+            echo "# $T Test - ${{ matrix.region }}" > "summary-${{ matrix.region }}.md"
+            tail -20 "output-${{ matrix.region }}.txt" >> "summary-${{ matrix.region }}.md"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: region-${{ matrix.region }}-results
+          path: |
+            output-${{ matrix.region }}*.txt
+            results-${{ matrix.region }}*.json
+            summary-${{ matrix.region }}*.md
+
+  # ============================================================
+  # REGIONAL ANALYSIS & GLOBAL REPORT
+  # ============================================================
+  regional-analysis:
+    if: github.event.inputs.execution_mode == 'multi-region'
+    runs-on: ubuntu-latest
+    needs: multi-region-tests
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          path: regional-results
+          pattern: region-*-results
+          merge-multiple: true
+
+      - name: Generate Global Analysis Report
+        run: |
+          echo "# 🌍 GLOBAL PERFORMANCE ANALYSIS REPORT" > global-report.md
+          echo "**Report Generated:** $(date)" >> global-report.md
+          echo "**Test Type:** ${{ github.event.inputs.test_type }}" >> global-report.md
+          echo "**Regions Tested:** 3" >> global-report.md
+          echo "" >> global-report.md
+
+          echo "## 📊 Regional Performance Summary" >> global-report.md
+          echo "| Region | Test Type | Status | Output |" >> global-report.md
+          echo "|--------|-----------|--------|--------|" >> global-report.md
+
+          for REGION in us-west eu-west apac-sg; do
+            FILES=$(ls regional-results/output-$REGION*.txt 2>/dev/null || echo "")
+            for F in $FILES; do
+              T_NAME=$(basename $F | sed -E "s/output-$REGION-(.*).txt/\1/")
+              LAST_LINE=$(tail -1 "$F" 2>/dev/null || echo "No output")
+              STATUS=$(echo "$LAST_LINE" | grep -q "completed" && echo "✅ Success" || echo "⚠️ Issues")
+              echo "| $REGION | $T_NAME | $STATUS | \`$LAST_LINE\` |" >> global-report.md
+            done
+          done
+
+          # Pie chart visualization
+          echo "## 📈 Regional Test Status" >> global-report.md
+          echo '```mermaid' >> global-report.md
+          echo 'pie title Test Completion by Region' >> global-report.md
+          echo '    "US West" : 1' >> global-report.md
+          echo '    "EU West" : 1' >> global-report.md
+          echo '    "APAC Singapore" : 1' >> global-report.md
+          echo '```' >> global-report.md
+
+          cat global-report.md >> $GITHUB_STEP_SUMMARY
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: global-performance-report
+          path: global-report.md
+
+  # ============================================================
+  # WORKFLOW SUMMARY
+  # ============================================================
+  workflow-summary:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    if: always()
+    steps:
+      - name: Generate Final Summary
+        run: |
+          echo "# 🏁 PERFORMANCE TESTING COMPLETE" >> $GITHUB_STEP_SUMMARY
+          MODE="${{ github.event.inputs.execution_mode }}"
+          TEST_TYPE="${{ github.event.inputs.test_type }}"
+          echo "**Execution Mode:** $MODE" >> $GITHUB_STEP_SUMMARY
+          echo "**Test Type:** $TEST_TYPE" >> $GITHUB_STEP_SUMMARY
+          echo "**Workflow Status:** ${{ job.status }}" >> $GITHUB_STEP_SUMMARY
+          echo ""
+          if [ "$MODE" = "single-region" ]; then
+            echo "✅ Single Region Test Completed" >> $GITHUB_STEP_SUMMARY
+          else
+            echo "🌍 Multi-Region Testing Completed" >> $GITHUB_STEP_SUMMARY
+          fi
+          echo "*Workflow completed at: $(date)*" >> $GITHUB_STEP_SUMMARY
