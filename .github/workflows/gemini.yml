@@ -22,9 +22,6 @@ on:
           - load
           - spike
           - stress
-  schedule:
-    - cron: '0 8 * * 1'
-    - cron: '0 0 * * 0'
 
 permissions:
   contents: read
@@ -32,10 +29,6 @@ permissions:
   checks: write
   pages: write
   id-token: write
-
-concurrency:
-  group: performance-${{ github.ref }}
-  cancel-in-progress: true
 
 env:
   K6_CLOUD_TOKEN: ${{ secrets.K6_CLOUD_TOKEN }}
@@ -58,83 +51,64 @@ jobs:
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
-          
-      - name: Setup Node.js
-        uses: actions/setup-node@v4
-        with:
-          node-version: ${{ env.NODE_VERSION }}
           
       - name: Setup k6
         uses: grafana/setup-k6-action@v1
         
-      - name: Verify test files exist
-        run: |
-          echo "🔍 Checking for test files..."
-          declare -A TESTS=( ["smoke"]="tests/performance/smoke/dummyjson-smoke.js" ["load"]="tests/performance/load/dummyjson-load.js" ["spike"]="tests/performance/spike/dummyjson-spike.js" ["stress"]="tests/performance/stress/dummyjson-stress.js" )
-          for TEST in smoke load spike stress; do
-            if [ -f "${TESTS[$TEST]}" ]; then echo "✅ Found $TEST"; else echo "⚠️ Missing $TEST"; fi
-          done
-          
-      - name: Determine which tests to run
-        run: |
-          TEST_TYPE="${{ github.event.inputs.test_type }}"
-          for T in SMOKE LOAD SPIKE STRESS; do
-            if [ "$TEST_TYPE" = "all" ] || [ "$TEST_TYPE" = "${T,,}" ]; then
-              echo "RUN_$T=true" >> $GITHUB_ENV
-            else
-              echo "RUN_$T=false" >> $GITHUB_ENV
-            fi
-          done
-
-      - name: Run Selected Performance Tests
+      - name: Run Performance Tests
         run: |
           set -euo pipefail
+          # Map test types to files
           declare -A TESTS=( ["smoke"]="tests/performance/smoke/dummyjson-smoke.js" ["load"]="tests/performance/load/dummyjson-load.js" ["spike"]="tests/performance/spike/dummyjson-spike.js" ["stress"]="tests/performance/stress/dummyjson-stress.js" )
-          FAILED_TESTS=()
+          
           for TEST in smoke load spike stress; do
-            RUN_VAR="RUN_${TEST^^}"
-            if [ "${!RUN_VAR}" = "true" ]; then
-              TIMESTAMP=$(date +%Y%m%d-%H%M%S)
-              if k6 run "${TESTS[$TEST]}" --out json="k6-${TEST}-results-${TIMESTAMP}.json" --tag region="$REGION" 2>&1 | tee "k6-${TEST}-output-${TIMESTAMP}.txt"; then
-                echo "✅ $TEST passed"
-              else
-                FAILED_TESTS+=("$TEST")
-              fi
+            if [[ "${{ github.event.inputs.test_type }}" == "all" || "${{ github.event.inputs.test_type }}" == "$TEST" ]]; then
+              echo "🚀 Running $TEST..."
+              k6 run "${TESTS[$TEST]}" \
+                --summary-export="summary-${TEST}.json" \
+                --out json="raw-${TEST}.json" > "output-${TEST}.txt"
             fi
           done
-          
-      - name: Create Single Region Performance Report
+
+      - name: Generate Professional Report
         if: always()
         run: |
-          echo "# 📊 SINGLE REGION PERFORMANCE REPORT" > single-region-report.md
-          echo "**🌍 Region:** ${{ env.REGION_NAME }}" >> single-region-report.md
-          echo "## 📈 Visual Performance Summary" >> single-region-report.md
-          echo "\`\`\`mermaid" >> single-region-report.md
-          echo "pie title Test Execution Status" >> single-region-report.md
-          echo "    \"Passed\" : 100" >> single-region-report.md
-          echo "\`\`\`" >> single-region-report.md
+          echo "# 📊 PROFESSIONAL PERFORMANCE REPORT" > report.md
+          echo "### 🌍 Region: ${{ env.REGION_NAME }} | 🏷️ Run: ${{ github.run_id }}" >> report.md
           
-          echo "## 📋 Test Execution Summary" >> single-region-report.md
-          echo "| Test | Status | Execution Time |" >> single-region-report.md
-          echo "|------|--------|----------------|" >> single-region-report.md
-          for f in k6-*-output-*.txt; do
-            [ -e "$f" ] || continue
-            TNAME=$(echo $f | cut -d'-' -f2)
-            echo "| $TNAME | ✅ PASS | $(date) |" >> single-region-report.md
+          echo "## 📈 Latency Trends (P95)" >> report.md
+          echo "\`\`\`mermaid" >> report.md
+          echo "graph LR" >> report.md
+          
+          # Dynamic table generation
+          echo "## 📋 Detailed Performance Metrics" >> report.md
+          echo "| Test Type | Avg Latency | P95 Latency | Req/Sec | Fail Rate |" >> report.md
+          echo "|-----------|-------------|-------------|---------|-----------|" >> report.md
+          
+          for f in summary-*.json; do
+            T_NAME=$(echo $f | sed 's/summary-//;s/.json//')
+            AVG=$(jq '.metrics.http_req_duration.values.avg' $f)
+            P95=$(jq '.metrics.http_req_duration.values."p(95)"' $f)
+            RPS=$(jq '.metrics.http_reqs.values.rate' $f)
+            ERR=$(jq '.metrics.http_req_failed.values.rate' $f)
+            
+            echo "| ${T_NAME^^} | ${AVG%.*}ms | ${P95%.*}ms | ${RPS%.*} | ${ERR}% |" >> report.md
+            # Add to graph
+            echo "    Start --> ${T_NAME^^}(${P95%.*}ms)" >> report.md
           done
-          cat single-region-report.md >> $GITHUB_STEP_SUMMARY
+          echo "\`\`\`" >> report.md
+          
+          cat report.md >> $GITHUB_STEP_SUMMARY
 
-      - name: Upload Single Region Results
+      - name: Upload Artifacts
         if: always()
         uses: actions/upload-artifact@v4
         with:
           name: single-region-results-${{ env.REPORT_TIMESTAMP }}
           path: |
-            k6-*.json
-            k6-*.txt
-            single-region-report.md
+            summary-*.json
+            output-*.txt
+            report.md
 
   # ============================================================
   # MULTI-REGION PERFORMANCE TESTING
@@ -144,110 +118,56 @@ jobs:
     strategy:
       matrix:
         region_config:
-          - {runner: ubuntu-latest, region_label: "US West (California)", region_id: us-west, region_emoji: "🇺🇸"}
-          - {runner: windows-latest, region_label: "EU West (Netherlands)", region_id: eu-west, region_emoji: "🇳🇱"}
-          - {runner: macos-latest, region_label: "Asia Pacific (Singapore)", region_id: apac-sg, region_emoji: "🇸🇬"}
+          - {runner: ubuntu-latest, id: us-west, label: "US West", emoji: "🇺🇸"}
+          - {runner: windows-latest, id: eu-west, label: "EU West", emoji: "🇳🇱"}
+          - {runner: macos-latest, id: apac-sg, label: "APAC SG", emoji: "🇸🇬"}
       fail-fast: false
     runs-on: ${{ matrix.region_config.runner }}
-    env:
-      REGION_ID: ${{ matrix.region_config.region_id }}
-      REGION_LABEL: ${{ matrix.region_config.region_label }}
-      REGION_EMOJI: ${{ matrix.region_config.region_emoji }}
     steps:
-      - name: Checkout repository
+      - name: Checkout
         uses: actions/checkout@v4
       - name: Setup k6
         uses: grafana/setup-k6-action@v1
       
-      - name: Run k6 Test
+      - name: Run Cross-Platform Test
         shell: bash
         run: |
           TEST_TYPE="${{ github.event.inputs.test_type }}"
-          [[ "$TEST_TYPE" == "all" ]] && SPECIFIC_TEST="load" || SPECIFIC_TEST="$TEST_TYPE"
-          TEST_FILE="tests/performance/$SPECIFIC_TEST/dummyjson-$SPECIFIC_TEST.js"
-          TIMESTAMP=$(date +%Y%m%d-%H%M%S)
-          k6 run "$TEST_FILE" --summary-export="summary-$REGION_ID-$TIMESTAMP.json" > output-$REGION_ID-$TIMESTAMP.txt
+          [[ "$TEST_TYPE" == "all" ]] && EXEC="load" || EXEC="$TEST_TYPE"
+          k6 run "tests/performance/$EXEC/dummyjson-$EXEC.js" --summary-export="summary-${{ matrix.region_config.id }}.json"
 
-      - name: Extract Metrics (Cross-Platform Fix)
-        if: always()
-        shell: bash
-        run: |
-          # Portable extraction using awk (works on Mac/Win/Linux)
-          LATEST_FILE=$(ls -t output-$REGION_ID-*.txt | head -1)
-          AVG=$(awk '/http_req_duration/ {for(i=1;i<=NF;i++) if($i~/avg=/) {split($i,a,"="); print a[2]}}' $LATEST_FILE | sed 's/ms//g' | head -1)
-          P95=$(awk '/http_req_duration/ {for(i=1;i<=NF;i++) if($i~/p\(95\)=/) {split($i,a,"="); print a[2]}}' $LATEST_FILE | sed 's/ms//g' | head -1)
-          echo "AVG_RESPONSE=$AVG" >> $GITHUB_ENV
-          echo "P95_RESPONSE=$P95" >> $GITHUB_ENV
-
-      - name: Create Region Summary
-        if: always()
-        shell: bash
-        run: |
-          echo "# $REGION_EMOJI $REGION_LABEL Results" > "region-summary-$REGION_ID.md"
-          echo "| Metric | Value |" >> "region-summary-$REGION_ID.md"
-          echo "|---|---| " >> "region-summary-$REGION_ID.md"
-          echo "| Avg | ${{ env.AVG_RESPONSE }}ms |" >> "region-summary-$REGION_ID.md"
-          echo "| P95 | ${{ env.P95_RESPONSE }}ms |" >> "region-summary-$REGION_ID.md"
-
-      - name: Upload Regional Results
-        if: always()
+      - name: Upload Regional Data
         uses: actions/upload-artifact@v4
         with:
-          name: region-${{ matrix.region_config.region_id }}-results-${{ env.REPORT_TIMESTAMP }}
-          path: |
-            results-*.json
-            summary-*.json
-            output-*.txt
-            region-summary-*.md
+          name: raw-data-${{ matrix.region_config.id }}
+          path: summary-*.json
 
-  # ============================================================
-  # REGIONAL ANALYSIS & COMBINED REPORT
-  # ============================================================
   regional-analysis:
     if: github.event.inputs.execution_mode == 'multi-region'
     runs-on: ubuntu-latest
     needs: multi-region-tests
     steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
-      - name: Download all regional results
+      - name: Download Data
         uses: actions/download-artifact@v4
         with:
-          path: regional-results
-          pattern: region-*-results-*
+          path: data
           merge-multiple: true
-          
-      - name: Generate Global Analysis Report
+      
+      - name: Compare Global Regions
         run: |
-          echo "# 🌍 GLOBAL PERFORMANCE ANALYSIS REPORT" > global-report.md
-          echo "## 📊 Regional Latency Graph" >> global-report.md
-          echo "\`\`\`mermaid" >> global-report.md
-          echo "barChart" >> global-report.md
-          echo "    title Average Response Time (ms)" >> global-report.md
+          echo "# 🌍 GLOBAL COMPARISON REPORT" > global.md
+          echo "\`\`\`mermaid" >> global.md
+          echo "pie title Latency Distribution by Region" >> global.md
           
-          # Gather data for table and graph
-          echo "| Region | Avg Response | P95 Response |" >> global-report.md
-          echo "|--------|--------------|--------------|" >> global-report.md
+          echo "| Region | Avg Latency | P95 |" >> global.md
+          echo "|--------|-------------|-----|" >> global.md
           
-          for f in regional-results/summary-*.json; do
-            RID=$(basename $f | cut -d'-' -f2)
-            AVG=$(jq -r '.metrics.http_req_duration.values.avg' $f)
-            P95=$(jq -r '.metrics.http_req_duration.values."p(95)"' $f)
-            echo "    \"$RID\" : $AVG" >> global-report.md
-            echo "| $RID | ${AVG}ms | ${P95}ms |" >> global-report.md
+          for f in data/summary-*.json; do
+            RID=$(basename $f | sed 's/summary-//;s/.json//')
+            AVG=$(jq '.metrics.http_req_duration.values.avg' $f)
+            P95=$(jq '.metrics.http_req_duration.values."p(95)"' $f)
+            echo "    \"$RID\" : $AVG" >> global.md
+            echo "| $RID | ${AVG%.*}ms | ${P95%.*}ms |" >> global.md
           done
-          echo "\`\`\`" >> global-report.md
-          cat global-report.md >> $GITHUB_STEP_SUMMARY
-
-  # ============================================================
-  # FINAL SUMMARY
-  # ============================================================
-  final-summary:
-    runs-on: ubuntu-latest
-    needs: [single-region-test, regional-analysis]
-    if: always()
-    steps:
-      - name: Generate Workflow Summary
-        run: |
-          echo "# 🏁 PERFORMANCE TESTING WORKFLOW COMPLETE" >> $GITHUB_STEP_SUMMARY
-          echo "Mode: ${{ github.event.inputs.execution_mode }}" >> $GITHUB_STEP_SUMMARY
+          echo "\`\`\`" >> global.md
+          cat global.md >> $GITHUB_STEP_SUMMARY
