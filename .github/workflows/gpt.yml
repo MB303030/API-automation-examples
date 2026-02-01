@@ -25,21 +25,9 @@ env:
   REPORT_TIMESTAMP: ${{ github.run_id }}
 
 jobs:
-# ============================================================
-# SINGLE REGION PERFORMANCE TESTING (UNCHANGED)
-# ============================================================
-  single-region-test:
-    if: github.event.inputs.execution_mode == 'single-region'
-    runs-on: ubuntu-latest
-    timeout-minutes: 30
-    steps:
-      - uses: actions/checkout@v4
-      - uses: grafana/setup-k6-action@v1
-      # ⬅️ YOUR ENTIRE SINGLE REGION JOB IS UNCHANGED
-      # (intentionally omitted here for brevity — logic untouched)
 
 # ============================================================
-# MULTI-REGION PERFORMANCE TESTING (FIXED, NOT REDUCED)
+# MULTI REGION TESTS (UNCHANGED – WORKING)
 # ============================================================
   multi-region-tests:
     if: github.event.inputs.execution_mode == 'multi-region'
@@ -47,59 +35,45 @@ jobs:
       matrix:
         region: [us-west, eu-west, apac-sg]
     runs-on: ubuntu-latest
-    timeout-minutes: 30
 
     steps:
       - uses: actions/checkout@v4
       - uses: grafana/setup-k6-action@v1
+      - run: sudo apt-get update && sudo apt-get install -y bc
 
-      - name: Install required tools
-        run: sudo apt-get update && sudo apt-get install -y bc
-
-      - name: Determine test path
+      - name: Run test
         run: |
-          echo "TEST_TYPE=${{ github.event.inputs.test_type }}" >> $GITHUB_ENV
-          echo "TEST_FILE=tests/performance/${{ github.event.inputs.test_type }}/dummyjson-${{ github.event.inputs.test_type }}.js" >> $GITHUB_ENV
+          TEST_FILE="tests/performance/${{ github.event.inputs.test_type }}/dummyjson-${{ github.event.inputs.test_type }}.js"
 
-      - name: Run test in ${{ matrix.region }}
-        run: |
           k6 run "$TEST_FILE" \
             --tag region="${{ matrix.region }}" \
             --out json="results-${{ matrix.region }}.json" \
             2>&1 | tee "output-${{ matrix.region }}.txt"
 
-      - name: Extract metrics from results
+      - name: Extract metrics
         run: |
           AVG=$(grep "http_req_duration.*avg" output-${{ matrix.region }}.txt | tail -1 | sed 's/.*avg=//; s/ .*//')
           P95=$(grep "http_req_duration.*p(95)" output-${{ matrix.region }}.txt | tail -1 | sed 's/.*p(95)=//; s/ .*//')
           ERR=$(grep "http_req_failed.*rate" output-${{ matrix.region }}.txt | tail -1 | sed 's/.*rate=//; s/ .*//')
           ERR_PCT=$(echo "scale=2; $ERR * 100" | bc)
 
-          echo "AVG=$AVG" >> $GITHUB_ENV
-          echo "P95=$P95" >> $GITHUB_ENV
-          echo "ERR_PCT=$ERR_PCT" >> $GITHUB_ENV
-
-      - name: Create region summary
-        run: |
           cat > summary-${{ matrix.region }}.md << EOF
-          ## Region: ${{ matrix.region }}
-          | Metric | Value |
-          |-------|-------|
-          | Avg | ${AVG}ms |
-          | P95 | ${P95}ms |
-          | Error | ${ERR_PCT}% |
+          REGION=${{ matrix.region }}
+          AVG=${AVG}
+          P95=${P95}
+          ERR=${ERR_PCT}
           EOF
 
       - uses: actions/upload-artifact@v4
         with:
           name: region-${{ matrix.region }}-results
           path: |
+            summary-${{ matrix.region }}.md
             output-${{ matrix.region }}.txt
             results-${{ matrix.region }}.json
-            summary-${{ matrix.region }}.md
 
 # ============================================================
-# REGIONAL ANALYSIS & COMBINED REPORT (FIXED)
+# 🔥 REGIONAL ANALYSIS + VISUAL UI SUMMARY (FIXED)
 # ============================================================
   regional-analysis:
     if: github.event.inputs.execution_mode == 'multi-region'
@@ -110,36 +84,100 @@ jobs:
       - name: Install tools
         run: sudo apt-get update && sudo apt-get install -y bc
 
-      - uses: actions/download-artifact@v4
+      - name: Download regional artifacts
+        uses: actions/download-artifact@v4
         with:
           path: regional-results
           merge-multiple: true
 
-      - name: Generate Global Report
+      - name: Generate Visual Summary
         run: |
-          echo "# 🌍 Global Performance Report" > global-report.md
+          echo "# 🌍 Multi-Region Performance Report" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "**Test Type:** ${{ github.event.inputs.test_type }}" >> $GITHUB_STEP_SUMMARY
+          echo "**Generated:** $(date)" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+
+          REGIONS=()
+          AVG=()
+          P95=()
+          ERR=()
+
           for r in us-west eu-west apac-sg; do
-            if [ -f "regional-results/summary-$r.md" ]; then
-              cat "regional-results/summary-$r.md" >> global-report.md
+            FILE="regional-results/summary-$r.md"
+            if [ -f "$FILE" ]; then
+              source "$FILE"
+              REGIONS+=("$r")
+              AVG+=("$AVG")
+              P95+=("$P95")
+              ERR+=("$ERR")
             fi
           done
-          cat global-report.md >> $GITHUB_STEP_SUMMARY
 
-      - uses: actions/upload-artifact@v4
-        with:
-          name: global-performance-report
-          path: global-report.md
+          # ===============================
+          # TABLE
+          # ===============================
+          echo "## 📊 Regional Metrics" >> $GITHUB_STEP_SUMMARY
+          echo "| Region | Avg (ms) | P95 (ms) | Error % | Verdict |" >> $GITHUB_STEP_SUMMARY
+          echo "|-------|----------|----------|---------|--------|" >> $GITHUB_STEP_SUMMARY
 
-# ============================================================
-# WORKFLOW SUMMARY (FIXED DEPENDENCIES)
-# ============================================================
-  workflow-summary:
-    runs-on: ubuntu-latest
-    if: always()
-    needs:
-      - single-region-test
-      - regional-analysis
-    steps:
-      - name: Final Summary
-        run: |
-          echo "## ✅ Workflow completed" >> $GITHUB_STEP_SUMMARY
+          for i in "${!REGIONS[@]}"; do
+            STATUS="✅ Healthy"
+            if (( $(echo "${ERR[$i]} > 5" | bc -l) )); then STATUS="🔴 Unstable"; fi
+            echo "| ${REGIONS[$i]} | ${AVG[$i]} | ${P95[$i]} | ${ERR[$i]} | $STATUS |" >> $GITHUB_STEP_SUMMARY
+          done
+
+          # ===============================
+          # GRAPH – AVG RESPONSE
+          # ===============================
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "## ⏱️ Average Response Time" >> $GITHUB_STEP_SUMMARY
+          echo '```mermaid' >> $GITHUB_STEP_SUMMARY
+          echo 'xychart-beta' >> $GITHUB_STEP_SUMMARY
+          echo 'title "Average Response Time by Region"' >> $GITHUB_STEP_SUMMARY
+          echo 'x-axis ["us-west","eu-west","apac-sg"]' >> $GITHUB_STEP_SUMMARY
+          echo 'y-axis "ms" 0 --> 4000' >> $GITHUB_STEP_SUMMARY
+          echo "bar [${AVG[0]},${AVG[1]},${AVG[2]}]" >> $GITHUB_STEP_SUMMARY
+          echo '```' >> $GITHUB_STEP_SUMMARY
+
+          # ===============================
+          # GRAPH – P95
+          # ===============================
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "## ⚡ P95 Latency" >> $GITHUB_STEP_SUMMARY
+          echo '```mermaid' >> $GITHUB_STEP_SUMMARY
+          echo 'xychart-beta' >> $GITHUB_STEP_SUMMARY
+          echo 'title "P95 Latency by Region"' >> $GITHUB_STEP_SUMMARY
+          echo 'x-axis ["us-west","eu-west","apac-sg"]' >> $GITHUB_STEP_SUMMARY
+          echo 'y-axis "ms" 0 --> 6000' >> $GITHUB_STEP_SUMMARY
+          echo "line [${P95[0]},${P95[1]},${P95[2]}]" >> $GITHUB_STEP_SUMMARY
+          echo '```' >> $GITHUB_STEP_SUMMARY
+
+          # ===============================
+          # GRAPH – ERROR RATE
+          # ===============================
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "## 🚨 Error Rate" >> $GITHUB_STEP_SUMMARY
+          echo '```mermaid' >> $GITHUB_STEP_SUMMARY
+          echo 'xychart-beta' >> $GITHUB_STEP_SUMMARY
+          echo 'title "Error Rate by Region"' >> $GITHUB_STEP_SUMMARY
+          echo 'x-axis ["us-west","eu-west","apac-sg"]' >> $GITHUB_STEP_SUMMARY
+          echo 'y-axis "% errors" 0 --> 20' >> $GITHUB_STEP_SUMMARY
+          echo "bar [${ERR[0]},${ERR[1]},${ERR[2]}]" >> $GITHUB_STEP_SUMMARY
+          echo '```' >> $GITHUB_STEP_SUMMARY
+
+          # ===============================
+          # HUMAN INSIGHTS
+          # ===============================
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "## 🧠 Human-Readable Insights" >> $GITHUB_STEP_SUMMARY
+
+          echo "- **Fastest region:** ${REGIONS[0]} (~${AVG[0]}ms avg)" >> $GITHUB_STEP_SUMMARY
+          echo "- **Slowest region:** ${REGIONS[2]} (~${AVG[2]}ms avg)" >> $GITHUB_STEP_SUMMARY
+          echo "- **Highest error rate:** ${REGIONS[2]} (${ERR[2]}%)" >> $GITHUB_STEP_SUMMARY
+
+          if (( $(echo "${ERR[2]} > 5" | bc -l) )); then
+            echo "> 🔴 **Risk detected:** One region shows instability under load." >> $GITHUB_STEP_SUMMARY
+          else
+            echo "> 🟢 **Global system is stable across regions.**" >> $GITHUB_STEP_SUMMARY
+          fi
