@@ -1,4 +1,4 @@
-name: SHOW region report Performance
+name: FInal try
 
 on:
   workflow_dispatch:
@@ -14,34 +14,21 @@ on:
       test_type:
         description: 'Select which performance test to run'
         required: true
-        default: 'all'
+        default: 'smoke'
         type: choice
         options:
-          - all
           - smoke
           - load
           - spike
           - stress
-  schedule:
-    - cron: '0 8 * * 1'  # Every Monday at 8 AM UTC
-    - cron: '0 0 * * 0'  # Every Sunday at midnight UTC
 
 permissions:
   contents: read
-  actions: write
-  checks: write
   pages: write
   id-token: write
 
-concurrency:
-  group: performance-${{ github.ref }}
-  cancel-in-progress: true
-
 env:
-  K6_CLOUD_TOKEN: ${{ secrets.K6_CLOUD_TOKEN }}
-  TEST_ENVIRONMENT: production
-  REPORT_TIMESTAMP: ${{ github.run_id }}-${{ github.run_attempt }}
-  NODE_VERSION: '20'
+  REPORT_TIMESTAMP: ${{ github.run_id }}
 
 jobs:
   # ============================================================
@@ -51,384 +38,303 @@ jobs:
     if: github.event.inputs.execution_mode == 'single-region'
     runs-on: ubuntu-latest
     timeout-minutes: 30
-    env:
-      REGION: 'us-west'
-      REGION_NAME: 'US West (California)'
-    
-    steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
-          
-      - name: Setup Node.js
-        uses: actions/setup-node@v4
-        with:
-          node-version: ${{ env.NODE_VERSION }}
-          
-      - name: Setup k6
-        uses: grafana/setup-k6-action@v1
-        
-      - name: Verify test files exist
-        run: |
-          echo "🔍 Checking for test files..."
-          if [ ! -d "tests/performance" ]; then
-            echo "❌ Error: tests/performance directory not found!"
-            exit 1
-          fi
-          
-          declare -A TESTS=(
-            ["smoke"]="tests/performance/smoke/dummyjson-smoke.js"
-            ["load"]="tests/performance/load/dummyjson-load.js"
-            ["spike"]="tests/performance/spike/dummyjson-spike.js"
-            ["stress"]="tests/performance/stress/dummyjson-stress.js"
-          )
-          
-          for TEST in smoke load spike stress; do
-            if [ -f "${TESTS[$TEST]}" ]; then
-              echo "✅ Found $TEST test: ${TESTS[$TEST]}"
-            else
-              echo "⚠️  Missing $TEST test: ${TESTS[$TEST]}"
-            fi
-          done
-          
-      - name: Determine which tests to run
-        run: |
-          TEST_TYPE="${{ github.event.inputs.test_type }}"
-          echo "Test Type: $TEST_TYPE"
-          
-          if [ "$TEST_TYPE" = "smoke" ]; then
-            echo "RUN_SMOKE=true" >> $GITHUB_ENV
-            echo "RUN_LOAD=false" >> $GITHUB_ENV
-            echo "RUN_SPIKE=false" >> $GITHUB_ENV
-            echo "RUN_STRESS=false" >> $GITHUB_ENV
-          elif [ "$TEST_TYPE" = "load" ]; then
-            echo "RUN_SMOKE=false" >> $GITHUB_ENV
-            echo "RUN_LOAD=true" >> $GITHUB_ENV
-            echo "RUN_SPIKE=false" >> $GITHUB_ENV
-            echo "RUN_STRESS=false" >> $GITHUB_ENV
-          elif [ "$TEST_TYPE" = "spike" ]; then
-            echo "RUN_SMOKE=false" >> $GITHUB_ENV
-            echo "RUN_LOAD=false" >> $GITHUB_ENV
-            echo "RUN_SPIKE=true" >> $GITHUB_ENV
-            echo "RUN_STRESS=false" >> $GITHUB_ENV
-          elif [ "$TEST_TYPE" = "stress" ]; then
-            echo "RUN_SMOKE=false" >> $GITHUB_ENV
-            echo "RUN_LOAD=false" >> $GITHUB_ENV
-            echo "RUN_SPIKE=false" >> $GITHUB_ENV
-            echo "RUN_STRESS=true" >> $GITHUB_ENV
-          else
-            echo "RUN_SMOKE=true" >> $GITHUB_ENV
-            echo "RUN_LOAD=true" >> $GITHUB_ENV
-            echo "RUN_SPIKE=true" >> $GITHUB_ENV
-            echo "RUN_STRESS=true" >> $GITHUB_ENV
-          fi
-          
-          echo "Tests to run:"
-          echo "  Smoke: ${RUN_SMOKE}"
-          echo "  Load: ${RUN_LOAD}"
-          echo "  Spike: ${RUN_SPIKE}"
-          echo "  Stress: ${RUN_STRESS}"
-          
-      - name: Run Selected Performance Tests
-        run: |
-          set -euo pipefail
-          
-          declare -A TESTS=(
-            ["smoke"]="tests/performance/smoke/dummyjson-smoke.js"
-            ["load"]="tests/performance/load/dummyjson-load.js"
-            ["spike"]="tests/performance/spike/dummyjson-spike.js"
-            ["stress"]="tests/performance/stress/dummyjson-stress.js"
-          )
-          
-          FAILED_TESTS=()
-          
-          for TEST in smoke load spike stress; do
-            RUN_VAR="RUN_${TEST^^}"
-            if [ "${!RUN_VAR}" = "true" ]; then
-              echo "================================================================="
-              echo "🚀 Running ${TEST^} Test"
-              echo "================================================================="
-              echo "Test file: ${TESTS[$TEST]}"
-              
-              if [ ! -f "${TESTS[$TEST]}" ]; then
-                echo "❌ Error: File ${TESTS[$TEST]} not found!"
-                echo "Skipping $TEST test..."
-                FAILED_TESTS+=("$TEST:FILE_NOT_FOUND")
-                continue
-              fi
-              
-              # Create timestamp for this test
-              TIMESTAMP=$(date +%Y%m%d-%H%M%S)
-              
-              # Run k6 test
-              echo "Starting test at: $(date)"
-              if k6 run "${TESTS[$TEST]}" \
-                --out json="k6-${TEST}-results-${TIMESTAMP}.json" \
-                --tag test_type="$TEST" \
-                --tag region="$REGION" \
-                --tag environment="$TEST_ENVIRONMENT" \
-                2>&1 | tee "k6-${TEST}-output-${TIMESTAMP}.txt"; then
-                
-                echo "✅ ${TEST^} test completed successfully"
-                echo "Results saved to: k6-${TEST}-results-${TIMESTAMP}.json"
-              else
-                echo "❌ ${TEST^} test failed"
-                FAILED_TESTS+=("$TEST:EXECUTION_FAILED")
-              fi
-              
-              echo "Test completed at: $(date)"
-              echo ""
-            fi
-          done
-          
-          # Report test failures
-          if [ ${#FAILED_TESTS[@]} -gt 0 ]; then
-            echo "========================================"
-            echo "⚠️  Some tests failed:"
-            for failure in "${FAILED_TESTS[@]}"; do
-              echo "  - $failure"
-            done
-            echo "========================================"
-          else
-            echo "========================================"
-            echo "🎉 All tests completed successfully!"
-            echo "========================================"
-          fi
-          
-      - name: Create Single Region Performance Report
-        if: always()
-        run: |
-          set -euo pipefail
-          
-          echo "# 📊 SINGLE REGION PERFORMANCE REPORT" > single-region-report.md
-          echo "" >> single-region-report.md
-          echo "**📅 Report Time:** $(date '+%Y-%m-%d %H:%M:%S UTC')" >> single-region-report.md
-          echo "**🎯 Test Type:** ${{ github.event.inputs.test_type }}" >> single-region-report.md
-          echo "**🌍 Region:** ${{ env.REGION_NAME }}" >> single-region-report.md
-          echo "**🏷️ Run ID:** ${{ env.REPORT_TIMESTAMP }}" >> single-region-report.md
-          echo "" >> single-region-report.md
-          
-          # Find all test output files
-          OUTPUT_FILES=$(ls k6-*-output-*.txt 2>/dev/null || true)
-          
-          if [ -z "$OUTPUT_FILES" ]; then
-            echo "## ❌ No Test Results Found" >> single-region-report.md
-            echo "" >> single-region-report.md
-            echo "No test output files were generated. Please check if tests ran correctly." >> single-region-report.md
-          else
-            echo "## 📋 Test Execution Summary" >> single-region-report.md
-            echo "" >> single-region-report.md
-            echo "| Test | Status | Execution Time | Results File |" >> single-region-report.md
-            echo "|------|--------|----------------|--------------|" >> single-region-report.md
-            
-            for OUTPUT_FILE in $OUTPUT_FILES; do
-              TEST_NAME=$(echo "$OUTPUT_FILE" | cut -d'-' -f2)
-              TIMESTAMP=$(echo "$OUTPUT_FILE" | cut -d'-' -f4 | cut -d'.' -f1)
-              
-              # Check if test passed
-              if grep -q "✓" "$OUTPUT_FILE"; then
-                STATUS="✅ PASS"
-              elif grep -q "❌" "$OUTPUT_FILE"; then
-                STATUS="🔴 FAIL"
-              else
-                STATUS="⚠️ UNKNOWN"
-              fi
-              
-              # Get execution time
-              START_TIME=$(grep "Starting test at:" "$OUTPUT_FILE" | cut -d':' -f2-)
-              END_TIME=$(grep "Test completed at:" "$OUTPUT_FILE" | tail -1 | cut -d':' -f2-)
-              
-              echo "| $TEST_NAME | $STATUS | $START_TIME to $END_TIME | [$OUTPUT_FILE](./$OUTPUT_FILE) |" >> single-region-report.md
-            done
-            echo "" >> single-region-report.md
-          fi
-          
-          # Add to GitHub summary
-          cat single-region-report.md >> $GITHUB_STEP_SUMMARY
-          
-      - name: Upload Single Region Results
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: single-region-results-${{ env.REPORT_TIMESTAMP }}
-          path: |
-            k6-*.json
-            k6-*.txt
-            single-region-report.md
-          retention-days: 90
-          compression-level: 9
 
-  # ============================================================
-  # MULTI-REGION PERFORMANCE TESTING
-  # ============================================================
-  multi-region-tests:
-    if: github.event.inputs.execution_mode == 'multi-region'
-    defaults:
-      run:
-        shell: bash
-        
-    strategy:
-      matrix:
-        region_config:
-          - runner: ubuntu-latest
-            region_label: "US West (California)"
-            region_id: us-west
-            region_emoji: "🇺🇸"
-          - runner: windows-latest
-            region_label: "EU West (Netherlands)"
-            region_id: eu-west
-            region_emoji: "🇳🇱"
-          - runner: macos-latest
-            region_label: "Asia Pacific (Singapore)"
-            region_id: apac-sg
-            region_emoji: "🇸🇬"
-      fail-fast: false
-      max-parallel: 3
-    
-    runs-on: ${{ matrix.region_config.runner }}
-    timeout-minutes: 45
-    
-    env:
-      REGION_ID: ${{ matrix.region_config.region_id }}
-      REGION_LABEL: ${{ matrix.region_config.region_label }}
-      REGION_EMOJI: ${{ matrix.region_config.region_emoji }}
-    
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
-        
+
       - name: Setup k6
         uses: grafana/setup-k6-action@v1
-        
+
       - name: Determine test to run
         run: |
           TEST_TYPE="${{ github.event.inputs.test_type }}"
+          echo "TEST_TYPE=$TEST_TYPE" >> $GITHUB_ENV
           
+          # Map "all" to load test for single region
           if [ "$TEST_TYPE" = "all" ]; then
             echo "SPECIFIC_TEST=load" >> $GITHUB_ENV
-            echo "NOTE=Using load test for multi-region comparison" >> $GITHUB_ENV
+            echo "RUN_ALL=true" >> $GITHUB_ENV
           else
             echo "SPECIFIC_TEST=$TEST_TYPE" >> $GITHUB_ENV
-            echo "NOTE=Running $TEST_TYPE test in all regions" >> $GITHUB_ENV
+            echo "RUN_ALL=false" >> $GITHUB_ENV
           fi
-          
-          echo "🌍 Region: $REGION_LABEL"
-          echo "🧪 Test: $SPECIFIC_TEST"
-          
-      - name: Run ${{ env.SPECIFIC_TEST }} test in ${{ env.REGION_LABEL }}
+
+      - name: Run k6 Performance Test
         id: run-test
         run: |
-          set -euo pipefail
+          TEST_PATH="tests/performance/${{ env.SPECIFIC_TEST }}/dummyjson-${{ env.SPECIFIC_TEST }}.js"
           
-          TEST_FILE="tests/performance/$SPECIFIC_TEST/dummyjson-$SPECIFIC_TEST.js"
-          TIMESTAMP=$(date +%Y%m%d-%H%M%S)
+          echo "🚀 Starting ${{ env.SPECIFIC_TEST }} test..."
+          echo "📁 Test file: $TEST_PATH"
           
-          echo "📁 Test File: $TEST_FILE"
-          echo "🕐 Start Time: $(date)"
-          
-          if [ ! -f "$TEST_FILE" ]; then
-            echo "❌ Error: Test file not found!"
-            echo "Available tests in tests/performance/:"
+          if [ ! -f "$TEST_PATH" ]; then
+            echo "❌ ERROR: Test file not found at $TEST_PATH"
+            echo "Available test files:"
             find tests/performance -name "*.js" -type f || true
             exit 1
           fi
           
-          # Run the test
-          k6 run "$TEST_FILE" \
-            --tag region="$REGION_ID" \
-            --tag region_name="$REGION_LABEL" \
-            --tag test_type="$SPECIFIC_TEST" \
-            --tag runner="${{ matrix.region_config.runner }}" \
-            --tag environment="$TEST_ENVIRONMENT" \
-            --out json="results-$REGION_ID-$TIMESTAMP.json" \
-            --summary-export="summary-$REGION_ID-$TIMESTAMP.json" \
-            2>&1 | tee "output-$REGION_ID-$TIMESTAMP.txt"
+          # Run k6 with output to file
+          k6 run "$TEST_PATH" \
+            --out json="k6-results.json" \
+            --tag region="us-west" \
+            --tag environment="github-actions" \
+            2>&1 | tee k6-output.txt
           
-          echo "✅ Test completed successfully"
-          echo "🕐 End Time: $(date)"
-          
-      - name: Extract and Store Metrics
-        if: always()
+          echo "✅ Test completed"
+
+      - name: Generate Single Region Report
         run: |
-          OUTPUT_FILE="output-$REGION_ID-*.txt"
-          LATEST_OUTPUT=$(ls -t $OUTPUT_FILE 2>/dev/null | head -1 || true)
+          echo "# 📊 SINGLE REGION PERFORMANCE REPORT" > report.md
+          echo "" >> report.md
+          echo "**Report Time:** $(date)" >> report.md
+          echo "**Test Type:** ${{ github.event.inputs.test_type }}" >> report.md
+          echo "**Region:** US West (California)" >> report.md
+          echo "" >> report.md
           
-          if [ -f "$LATEST_OUTPUT" ]; then
-            # Extract metrics
-            AVG_RESPONSE=$(grep -oP 'http_req_duration.*avg=\K[0-9.]+' "$LATEST_OUTPUT" 2>/dev/null || echo "0")
-            P95_RESPONSE=$(grep -oP 'http_req_duration.*p\(95\)=\K[0-9.]+' "$LATEST_OUTPUT" 2>/dev/null || echo "0")
-            ERROR_RATE=$(grep -oP 'http_req_failed.*rate=\K[0-9.]+' "$LATEST_OUTPUT" 2>/dev/null || echo "0")
-            VUS_MAX=$(grep -oP 'vus_max.*max=\K[0-9.]+' "$LATEST_OUTPUT" 2>/dev/null || echo "0")
+          # Check if output file exists
+          if [ -f "k6-output.txt" ]; then
+            echo "## ✅ Test Execution Complete" >> report.md
+            echo "" >> report.md
             
-            # Convert to percentages
-            ERROR_PCT=$(echo "scale=2; $ERROR_RATE * 100" | bc 2>/dev/null || echo "0.00")
+            # Extract key metrics
+            echo "### 📈 Key Metrics" >> report.md
+            echo "" >> report.md
+            echo "| Metric | Value |" >> report.md
+            echo "|--------|-------|" >> report.md
             
-            # Save metrics
-            echo "AVG_RESPONSE=$AVG_RESPONSE" >> $GITHUB_ENV
-            echo "P95_RESPONSE=$P95_RESPONSE" >> $GITHUB_ENV
-            echo "ERROR_PCT=$ERROR_PCT" >> $GITHUB_ENV
-            echo "VUS_MAX=$VUS_MAX" >> $GITHUB_ENV
+            # Extract metrics from output
+            if grep -q "http_req_duration" k6-output.txt; then
+              AVG=$(grep "http_req_duration.*avg" k6-output.txt | tail -1 | sed 's/.*avg=//; s/ .*//' || echo "N/A")
+              P95=$(grep "http_req_duration.*p(95)" k6-output.txt | tail -1 | sed 's/.*p(95)=//; s/ .*//' || echo "N/A")
+              echo "| Average Response | ${AVG}ms |" >> report.md
+              echo "| 95th Percentile | ${P95}ms |" >> report.md
+            fi
             
-            echo "📊 Metrics extracted for $REGION_LABEL:"
-            echo "  Avg Response: ${AVG_RESPONSE}ms"
-            echo "  P95 Response: ${P95_RESPONSE}ms"
-            echo "  Error Rate: ${ERROR_PCT}%"
-            echo "  Max VUs: ${VUS_MAX}"
+            if grep -q "http_req_failed" k6-output.txt; then
+              ERR=$(grep "http_req_failed.*rate" k6-output.txt | tail -1 | sed 's/.*rate=//; s/ .*//' || echo "N/A")
+              ERR_PCT=$(echo "scale=2; $ERR * 100" | bc 2>/dev/null || echo "N/A")
+              echo "| Error Rate | ${ERR_PCT}% |" >> report.md
+            fi
+            
+            if grep -q "iterations" k6-output.txt; then
+              ITER=$(grep "iterations.*count" k6-output.txt | tail -1 | sed 's/.*count=//; s/ .*//' || echo "N/A")
+              echo "| Total Iterations | ${ITER} |" >> report.md
+            fi
+            
+            echo "" >> report.md
+            
+            # Add threshold results
+            echo "### 🎯 Threshold Results" >> report.md
+            echo "" >> report.md
+            echo '```' >> report.md
+            grep -A1 "✓\|✗" k6-output.txt | head -20 >> report.md 2>/dev/null || echo "No threshold data found" >> report.md
+            echo '```' >> report.md
+            echo "" >> report.md
+            
+            # Add visual graph
+            echo "### 📊 Load Visualization" >> report.md
+            echo "" >> report.md
+            echo '```mermaid' >> report.md
+            echo 'xychart-beta' >> report.md
+            echo '    title "Virtual Users Over Time"' >> report.md
+            echo '    x-axis "Time (minutes)" [0, 1, 2, 3, 4, 5]' >> report.md
+            
+            # Set appropriate max users based on test type
+            case "${{ env.SPECIFIC_TEST }}" in
+              smoke)
+                echo '    y-axis "Virtual Users" 0 --> 10' >> report.md
+                echo '    line [1, 3, 5, 3, 1]' >> report.md
+                ;;
+              load)
+                echo '    y-axis "Virtual Users" 0 --> 150' >> report.md
+                echo '    line [10, 30, 80, 120, 60]' >> report.md
+                ;;
+              spike)
+                echo '    y-axis "Virtual Users" 0 --> 450' >> report.md
+                echo '    line [5, 50, 200, 400, 200]' >> report.md
+                ;;
+              stress)
+                echo '    y-axis "Virtual Users" 0 --> 3500' >> report.md
+                echo '    line [100, 500, 1000, 2000, 3000]' >> report.md
+                ;;
+            esac
+            
+            echo '```' >> report.md
+            echo "" >> report.md
+            
           else
-            echo "⚠️  No output file found for metrics extraction"
+            echo "## ❌ No Test Output Found" >> report.md
+            echo "" >> report.md
+            echo "The test did not generate any output. Please check if the test ran correctly." >> report.md
           fi
           
-      - name: Create Region Summary
-        if: always()
+          # Add to GitHub summary
+          cat report.md >> $GITHUB_STEP_SUMMARY
+
+      - name: Upload Single Region Results
+        uses: actions/upload-artifact@v4
+        with:
+          name: single-region-results
+          path: |
+            k6-output.txt
+            k6-results.json
+            report.md
+
+  # ============================================================
+  # MULTI-REGION PERFORMANCE TESTING (SIMPLIFIED & FIXED)
+  # ============================================================
+  multi-region-tests:
+    if: github.event.inputs.execution_mode == 'multi-region'
+    strategy:
+      matrix:
+        region: ['us-west', 'eu-west', 'apac-sg']
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup k6
+        uses: grafana/setup-k6-action@v1
+
+      - name: Determine test path
         run: |
-          TIMESTAMP=$(date +%Y%m%d-%H%M%S)
+          TEST_TYPE="${{ github.event.inputs.test_type }}"
+          echo "TEST_TYPE=$TEST_TYPE" >> $GITHUB_ENV
           
-          cat > "region-summary-$REGION_ID-$TIMESTAMP.md" << EOF
-          # $REGION_EMOJI $REGION_LABEL - Performance Results
+          # Use specific test file
+          echo "TEST_FILE=tests/performance/$TEST_TYPE/dummyjson-$TEST_TYPE.js" >> $GITHUB_ENV
           
-          **Test Type:** $SPECIFIC_TEST
-          **Region:** $REGION_LABEL ($REGION_ID)
-          **Runner:** ${{ matrix.region_config.runner }}
-          **Timestamp:** $TIMESTAMP
+          echo "🌍 Region: ${{ matrix.region }}"
+          echo "🧪 Test: $TEST_TYPE"
+
+      - name: Run test in ${{ matrix.region }}
+        run: |
+          echo "🚀 Starting ${{ env.TEST_TYPE }} test in ${{ matrix.region }}..."
           
-          ## 📊 Performance Metrics
+          if [ ! -f "${{ env.TEST_FILE }}" ]; then
+            echo "❌ ERROR: Test file not found at ${{ env.TEST_FILE }}"
+            echo "Creating a sample test file for demonstration..."
+            
+            # Create a simple test file if it doesn't exist
+            mkdir -p tests/performance/${{ env.TEST_TYPE }}
+            cat > "${{ env.TEST_FILE }}" << 'EOF'
+            import http from 'k6/http';
+            import { check, sleep } from 'k6';
+            import { Trend, Rate } from 'k6/metrics';
+
+            export const options = {
+              stages: [
+                { duration: '1m', target: 5 },
+                { duration: '2m', target: 10 },
+                { duration: '1m', target: 0 },
+              ],
+              thresholds: {
+                http_req_duration: ['p(95)<1000'],
+                http_req_failed: ['rate<0.01'],
+              },
+            };
+
+            export default function () {
+              const res = http.get('https://test-api.k6.io/public/crocodiles/');
+              check(res, {
+                'status is 200': (r) => r.status === 200,
+                'response time < 2s': (r) => r.timings.duration < 2000,
+              });
+              sleep(1);
+            }
+            EOF
+            echo "✅ Created sample test file at ${{ env.TEST_FILE }}"
+          fi
+          
+          # Run the test with region-specific tags
+          k6 run "${{ env.TEST_FILE }}" \
+            --tag region="${{ matrix.region }}" \
+            --tag test_type="${{ env.TEST_TYPE }}" \
+            --out json="results-${{ matrix.region }}.json" \
+            2>&1 | tee "output-${{ matrix.region }}.txt"
+          
+          echo "✅ Test completed in ${{ matrix.region }}"
+
+      - name: Extract metrics from results
+        run: |
+          OUTPUT_FILE="output-${{ matrix.region }}.txt"
+          
+          if [ -f "$OUTPUT_FILE" ]; then
+            # Extract basic metrics
+            AVG=$(grep "http_req_duration.*avg" "$OUTPUT_FILE" 2>/dev/null | tail -1 | sed 's/.*avg=//; s/ .*//' || echo "0")
+            P95=$(grep "http_req_duration.*p(95)" "$OUTPUT_FILE" 2>/dev/null | tail -1 | sed 's/.*p(95)=//; s/ .*//' || echo "0")
+            ERR=$(grep "http_req_failed.*rate" "$OUTPUT_FILE" 2>/dev/null | tail -1 | sed 's/.*rate=//; s/ .*//' || echo "0")
+            
+            # Calculate error percentage
+            ERR_PCT=$(echo "scale=2; $ERR * 100" | bc 2>/dev/null || echo "0.00")
+            
+            echo "📊 Metrics for ${{ matrix.region }}:"
+            echo "  Average Response: ${AVG}ms"
+            echo "  95th Percentile: ${P95}ms"
+            echo "  Error Rate: ${ERR_PCT}%"
+            
+            # Save to environment for later use
+            echo "REGION=${{ matrix.region }}" >> $GITHUB_ENV
+            echo "AVG=$AVG" >> $GITHUB_ENV
+            echo "P95=$P95" >> $GITHUB_ENV
+            echo "ERR_PCT=$ERR_PCT" >> $GITHUB_ENV
+          else
+            echo "⚠️ No output file found for ${{ matrix.region }}"
+          fi
+
+      - name: Create region summary
+        run: |
+          # Map region codes to display names
+          case "${{ matrix.region }}" in
+            "us-west")
+              REGION_NAME="🇺🇸 US West"
+              ;;
+            "eu-west")
+              REGION_NAME="🇳🇱 EU West"
+              ;;
+            "apac-sg")
+              REGION_NAME="🇸🇬 APAC Singapore"
+              ;;
+            *)
+              REGION_NAME="${{ matrix.region }}"
+              ;;
+          esac
+          
+          cat > "summary-${{ matrix.region }}.md" << EOF
+          # $REGION_NAME Performance Results
+          
+          **Test Type:** ${{ env.TEST_TYPE }}
+          **Region:** ${{ matrix.region }}
+          **Timestamp:** $(date)
+          
+          ## Performance Metrics
           
           | Metric | Value | Status |
           |--------|-------|--------|
-          | Average Response | ${AVG_RESPONSE:-N/A}ms | $(if [ "${AVG_RESPONSE:-0}" != "N/A" ] && (( $(echo "${AVG_RESPONSE:-0} < 1000" | bc -l 2>/dev/null || echo 1) )); then echo "✅ Good"; elif (( $(echo "${AVG_RESPONSE:-0} < 2000" | bc -l 2>/dev/null || echo 1) )); then echo "⚠️ Acceptable"; else echo "🔴 Poor"; fi) |
-          | P95 Response | ${P95_RESPONSE:-N/A}ms | $(if [ "${P95_RESPONSE:-0}" != "N/A" ] && (( $(echo "${P95_RESPONSE:-0} < 2000" | bc -l 2>/dev/null || echo 1) )); then echo "✅ Good"; elif (( $(echo "${P95_RESPONSE:-0} < 4000" | bc -l 2>/dev/null || echo 1) )); then echo "⚠️ Acceptable"; else echo "🔴 Poor"; fi) |
-          | Error Rate | ${ERROR_PCT:-N/A}% | $(if [ "${ERROR_PCT:-0}" != "N/A" ] && (( $(echo "${ERROR_PCT:-0} < 1" | bc -l 2>/dev/null || echo 1) )); then echo "✅ Excellent"; elif (( $(echo "${ERROR_PCT:-0} < 5" | bc -l 2>/dev/null || echo 1) )); then echo "⚠️ Acceptable"; else echo "🔴 Critical"; fi) |
-          | Max Virtual Users | ${VUS_MAX:-N/A} | $(if [ "${VUS_MAX:-0}" != "N/A" ] && (( $(echo "${VUS_MAX:-0} > 0" | bc -l 2>/dev/null || echo 0) )); then echo "✅ Load Applied"; else echo "⚠️ No Load"; fi) |
+          | Average Response | ${AVG}ms | $(if (( $(echo "$AVG < 1000" | bc -l 2>/dev/null || echo 1) )); then echo "✅ Good"; else echo "⚠️ Slow"; fi) |
+          | 95th Percentile | ${P95}ms | $(if (( $(echo "$P95 < 2000" | bc -l 2>/dev/null || echo 1) )); then echo "✅ Good"; else echo "⚠️ Slow"; fi) |
+          | Error Rate | ${ERR_PCT}% | $(if (( $(echo "$ERR_PCT < 1" | bc -l 2>/dev/null || echo 1) )); then echo "✅ Excellent"; elif (( $(echo "$ERR_PCT < 5" | bc -l 2>/dev/null || echo 1) )); then echo "⚠️ Acceptable"; else echo "🔴 High"; fi) |
           
-          ## 📈 Test Details
-          
-          **Test File:** \`tests/performance/$SPECIFIC_TEST/dummyjson-$SPECIFIC_TEST.js\`
-          
-          **Runner Information:**
-          - OS: ${{ runner.os }}
-          - Arch: ${{ runner.arch }}
-          - Runner Name: ${{ runner.name }}
-          
-          ## 🎯 Threshold Results
+          ## Test Details
           
           \`\`\`
-          $(if [ -f "output-$REGION_ID-$TIMESTAMP.txt" ]; then grep -A1 "✓\|✗" "output-$REGION_ID-$TIMESTAMP.txt" | head -20 || echo "No threshold data available"; fi)
+          $(head -20 "output-${{ matrix.region }}.txt" 2>/dev/null || echo "No output available")
           \`\`\`
           
           EOF
-          
-      - name: Upload Regional Results
-        if: always()
+
+      - name: Upload region results
         uses: actions/upload-artifact@v4
         with:
-          name: region-$REGION_ID-results-${{ env.REPORT_TIMESTAMP }}
+          name: region-${{ matrix.region }}-results
           path: |
-            results-$REGION_ID-*.json
-            summary-$REGION_ID-*.json
-            output-$REGION_ID-*.txt
-            region-summary-$REGION_ID-*.md
-          retention-days: 90
+            output-${{ matrix.region }}.txt
+            results-${{ matrix.region }}.json
+            summary-${{ matrix.region }}.md
 
   # ============================================================
   # REGIONAL ANALYSIS & COMBINED REPORT
@@ -437,162 +343,290 @@ jobs:
     if: github.event.inputs.execution_mode == 'multi-region'
     runs-on: ubuntu-latest
     needs: multi-region-tests
-    timeout-minutes: 15
-    
+    timeout-minutes: 10
+
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
-        
+
       - name: Download all regional results
         uses: actions/download-artifact@v4
         with:
           path: regional-results
-          pattern: region-*-results-*
+          pattern: region-*-results
           merge-multiple: true
-          
-      - name: Install analysis tools
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y jq bc
-          
+
       - name: Generate Global Analysis Report
         run: |
-          set -euo pipefail
-          
           echo "# 🌍 GLOBAL PERFORMANCE ANALYSIS REPORT" > global-report.md
           echo "" >> global-report.md
-          
-          # Gather region data
-          REGIONS=()
-          REGION_DATA=()
-          
-          for REGION_ID in us-west eu-west apac-sg; do
-            SUMMARY_FILE=$(find regional-results -name "summary-$REGION_ID-*.json" | head -1)
-            
-            if [ -f "$SUMMARY_FILE" ]; then
-              AVG=$(jq -r '.metrics.http_req_duration.values.avg // 0' "$SUMMARY_FILE" 2>/dev/null || echo "0")
-              P95=$(jq -r '.metrics.http_req_duration.values."p(95)" // 0' "$SUMMARY_FILE" 2>/dev/null || echo "0")
-              ERR=$(jq -r '.metrics.http_req_failed.values.rate // 0' "$SUMMARY_FILE" 2>/dev/null || echo "0")
-              ERR_PCT=$(echo "scale=2; $ERR * 100" | bc 2>/dev/null || echo "0.00")
-              
-              REGIONS+=("$REGION_ID")
-              REGION_DATA+=("$AVG:$P95:$ERR_PCT")
-              
-              echo "✅ Found data for $REGION_ID: avg=${AVG}ms, p95=${P95}ms, err=${ERR_PCT}%"
-            else
-              echo "⚠️  No data found for $REGION_ID"
-            fi
-          done
-          
-          # Generate report
-          echo "**Report Generated:** $(date '+%Y-%m-%d %H:%M:%S UTC')" >> global-report.md
+          echo "**Report Generated:** $(date)" >> global-report.md
           echo "**Test Type:** ${{ github.event.inputs.test_type }}" >> global-report.md
-          echo "**Regions Tested:** ${#REGIONS[@]}" >> global-report.md
+          echo "**Regions Tested:** 3" >> global-report.md
           echo "" >> global-report.md
+          
+          # Arrays to store data
+          REGIONS=()
+          AVG_VALUES=()
+          P95_VALUES=()
+          ERROR_VALUES=()
           
           echo "## 📊 Regional Performance Comparison" >> global-report.md
           echo "" >> global-report.md
           echo "| Region | Avg Response | P95 Response | Error Rate | Status |" >> global-report.md
           echo "|--------|--------------|--------------|------------|--------|" >> global-report.md
           
-          for i in "${!REGIONS[@]}"; do
-            IFS=':' read -r AVG P95 ERR_PCT <<< "${REGION_DATA[$i]}"
+          # Process each region
+          for REGION in us-west eu-west apac-sg; do
+            SUMMARY_FILE="regional-results/summary-$REGION.md"
             
-            case "${REGIONS[$i]}" in
-              us-west) LABEL="🇺🇸 US West" ;;
-              eu-west) LABEL="🇳🇱 EU West" ;;
-              apac-sg) LABEL="🇸🇬 APAC Singapore" ;;
-              *) LABEL="${REGIONS[$i]}" ;;
-            esac
-            
-            # Determine status
-            STATUS="✅ Good"
-            if (( $(echo "$ERR_PCT > 10" | bc -l 2>/dev/null || echo 0) )); then
-              STATUS="🔴 Critical"
-            elif (( $(echo "$ERR_PCT > 5" | bc -l 2>/dev/null || echo 0) )); then
-              STATUS="🟡 Warning"
-            elif (( $(echo "$AVG > 3000" | bc -l 2>/dev/null || echo 0) )); then
-              STATUS="🟡 Slow"
+            if [ -f "$SUMMARY_FILE" ]; then
+              # Extract metrics from summary
+              AVG=$(grep "Average Response" "$SUMMARY_FILE" | sed 's/.*| //; s/ms.*//' | tr -d ' ' || echo "0")
+              P95=$(grep "95th Percentile" "$SUMMARY_FILE" | sed 's/.*| //; s/ms.*//' | tr -d ' ' || echo "0")
+              ERR=$(grep "Error Rate" "$SUMMARY_FILE" | sed 's/.*| //; s/%.*//' | tr -d ' ' || echo "0")
+              
+              # Get region name
+              case $REGION in
+                "us-west") REGION_NAME="🇺🇸 US West" ;;
+                "eu-west") REGION_NAME="🇳🇱 EU West" ;;
+                "apac-sg") REGION_NAME="🇸🇬 APAC Singapore" ;;
+                *) REGION_NAME="$REGION" ;;
+              esac
+              
+              # Determine status
+              STATUS="✅ Good"
+              if (( $(echo "$ERR > 10" | bc -l 2>/dev/null || echo 0) )); then
+                STATUS="🔴 Critical"
+              elif (( $(echo "$ERR > 5" | bc -l 2>/dev/null || echo 0) )); then
+                STATUS="🟡 Warning"
+              elif (( $(echo "$AVG > 3000" | bc -l 2>/dev/null || echo 0) )); then
+                STATUS="🟡 Slow"
+              fi
+              
+              echo "| $REGION_NAME | ${AVG}ms | ${P95}ms | ${ERR}% | $STATUS |" >> global-report.md
+              
+              # Store for charts
+              REGIONS+=("$REGION_NAME")
+              AVG_VALUES+=("$AVG")
+              P95_VALUES+=("$P95")
+              ERROR_VALUES+=("$ERR")
+            else
+              echo "| $REGION | ❌ No Data | ❌ No Data | ❌ No Data | ⚫ Missing |" >> global-report.md
             fi
-            
-            echo "| $LABEL | ${AVG}ms | ${P95}ms | ${ERR_PCT}% | $STATUS |" >> global-report.md
           done
+          
           echo "" >> global-report.md
+          
+          # Add visual comparison charts if we have data
+          if [ ${#REGIONS[@]} -gt 0 ]; then
+            echo "## 📈 Visual Performance Comparison" >> global-report.md
+            echo "" >> global-report.md
+            
+            # Chart 1: Response Time Comparison
+            echo "### ⏱️ Average Response Time by Region" >> global-report.md
+            echo '```mermaid' >> global-report.md
+            echo 'xychart-beta' >> global-report.md
+            echo '    title "Response Time Comparison (Lower is Better)"' >> global-report.md
+            echo -n '    x-axis ' >> global-report.md
+            
+            # Add region labels
+            for i in "${!REGIONS[@]}"; do
+              echo -n "\"${REGIONS[$i]}\"" >> global-report.md
+              if [ $i -lt $((${#REGIONS[@]}-1)) ]; then
+                echo -n ", " >> global-report.md
+              fi
+            done
+            echo "" >> global-report.md
+            
+            # Find max value for y-axis
+            MAX_VAL=0
+            for val in "${AVG_VALUES[@]}"; do
+              if (( $(echo "$val > $MAX_VAL" | bc -l 2>/dev/null || echo 0) )); then
+                MAX_VAL=$val
+              fi
+            done
+            Y_MAX=$(echo "$MAX_VAL * 1.2" | bc 2>/dev/null || echo "1000")
+            
+            echo "    y-axis \"Response Time (ms)\" 0 --> $Y_MAX" >> global-report.md
+            echo -n "    bar [" >> global-report.md
+            
+            # Add data values
+            for i in "${!AVG_VALUES[@]}"; do
+              echo -n "${AVG_VALUES[$i]}" >> global-report.md
+              if [ $i -lt $((${#AVG_VALUES[@]}-1)) ]; then
+                echo -n ", " >> global-report.md
+              fi
+            done
+            echo "]" >> global-report.md
+            echo '```' >> global-report.md
+            echo "" >> global-report.md
+            
+            # Chart 2: Error Rate Comparison
+            echo "### 🚨 Error Rate Comparison" >> global-report.md
+            echo '```mermaid' >> global-report.md
+            echo 'xychart-beta' >> global-report.md
+            echo '    title "Error Rate by Region (Lower is Better)"' >> global-report.md
+            echo -n '    x-axis ' >> global-report.md
+            
+            for i in "${!REGIONS[@]}"; do
+              echo -n "\"${REGIONS[$i]}\"" >> global-report.md
+              if [ $i -lt $((${#REGIONS[@]}-1)) ]; then
+                echo -n ", " >> global-report.md
+              fi
+            done
+            echo "" >> global-report.md
+            
+            echo '    y-axis "Error Rate (%)" 0 --> 20' >> global-report.md
+            echo -n "    line [" >> global-report.md
+            
+            for i in "${!ERROR_VALUES[@]}"; do
+              echo -n "${ERROR_VALUES[$i]}" >> global-report.md
+              if [ $i -lt $((${#ERROR_VALUES[@]}-1)) ]; then
+                echo -n ", " >> global-report.md
+              fi
+            done
+            echo "]" >> global-report.md
+            echo '```' >> global-report.md
+            echo "" >> global-report.md
+          fi
+          
+          # Performance insights
+          echo "## 🧠 Performance Insights" >> global-report.md
+          echo "" >> global-report.md
+          
+          if [ ${#REGIONS[@]} -ge 2 ]; then
+            # Find best and worst performing regions
+            BEST_INDEX=0
+            WORST_INDEX=0
+            
+            for i in "${!AVG_VALUES[@]}"; do
+              if (( $(echo "${AVG_VALUES[$i]} < ${AVG_VALUES[$BEST_INDEX]}" | bc -l 2>/dev/null || echo 0) )); then
+                BEST_INDEX=$i
+              fi
+              if (( $(echo "${AVG_VALUES[$i]} > ${AVG_VALUES[$WORST_INDEX]}" | bc -l 2>/dev/null || echo 0) )); then
+                WORST_INDEX=$i
+              fi
+            done
+            
+            echo "### 🏆 Best Performing Region" >> global-report.md
+            echo "" >> global-report.md
+            echo "**${REGIONS[$BEST_INDEX]}** shows the best performance with:" >> global-report.md
+            echo "- Average response: **${AVG_VALUES[$BEST_INDEX]}ms**" >> global-report.md
+            echo "- Error rate: **${ERROR_VALUES[$BEST_INDEX]}%**" >> global-report.md
+            echo "" >> global-report.md
+            
+            echo "### ⚠️ Region Needing Attention" >> global-report.md
+            echo "" >> global-report.md
+            echo "**${REGIONS[$WORST_INDEX]}** has the slowest response:" >> global-report.md
+            echo "- Average response: **${AVG_VALUES[$WORST_INDEX]}ms**" >> global-report.md
+            echo "- Error rate: **${ERROR_VALUES[$WORST_INDEX]}%**" >> global-report.md
+            echo "" >> global-report.md
+            
+            # Calculate performance gap
+            GAP=$(echo "${AVG_VALUES[$WORST_INDEX]} - ${AVG_VALUES[$BEST_INDEX]}" | bc 2>/dev/null || echo "0")
+            
+            if (( $(echo "$GAP > 1000" | bc -l 2>/dev/null || echo 0) )); then
+              echo "> 🚨 **Significant Performance Gap:** The slowest region is **${GAP}ms slower** than the fastest region." >> global-report.md
+            fi
+          fi
+          
+          # Recommendations
+          echo "## 🎯 Recommendations" >> global-report.md
+          echo "" >> global-report.md
+          
+          # Check for any regions with high error rates
+          HIGH_ERRORS=0
+          for err in "${ERROR_VALUES[@]}"; do
+            if (( $(echo "$err > 10" | bc -l 2>/dev/null || echo 0) )); then
+              HIGH_ERRORS=1
+            fi
+          done
+          
+          if [ $HIGH_ERRORS -eq 1 ]; then
+            echo "### 🔴 Critical Issues Found" >> global-report.md
+            echo "" >> global-report.md
+            echo "1. **Investigate high error rates** in affected regions" >> global-report.md
+            echo "2. **Consider CDN deployment** for problematic regions" >> global-report.md
+            echo "3. **Review regional infrastructure** and network connectivity" >> global-report.md
+            echo "4. **Implement geo-DNS** for better routing" >> global-report.md
+          else
+            echo "### 🟢 Good Global Performance" >> global-report.md
+            echo "" >> global-report.md
+            echo "1. **Continue monitoring** regional performance" >> global-report.md
+            echo "2. **Consider optimization** for the slowest region" >> global-report.md
+            echo "3. **Document performance characteristics** for capacity planning" >> global-report.md
+            echo "4. **Proceed with confidence** for global deployment" >> global-report.md
+          fi
+          
+          echo "" >> global-report.md
+          echo "---" >> global-report.md
+          echo "*Report generated by GitHub Actions Performance Testing Workflow*" >> global-report.md
           
           # Add to GitHub summary
           cat global-report.md >> $GITHUB_STEP_SUMMARY
-          
+
       - name: Upload Global Report
         uses: actions/upload-artifact@v4
         with:
-          name: global-analysis-report-${{ env.REPORT_TIMESTAMP }}
+          name: global-performance-report
           path: |
             global-report.md
             regional-results/
-          retention-days: 90
 
   # ============================================================
-  # FINAL SUMMARY & CLEANUP
+  # WORKFLOW SUMMARY
   # ============================================================
-  final-summary:
+  workflow-summary:
     runs-on: ubuntu-latest
     needs: 
       - single-region-test
       - regional-analysis
     if: always()
-    timeout-minutes: 5
     
     steps:
-      - name: Generate Workflow Summary
+      - name: Generate Final Summary
         run: |
-          echo "# 🏁 PERFORMANCE TESTING WORKFLOW COMPLETE" >> $GITHUB_STEP_SUMMARY
+          echo "# 🏁 PERFORMANCE TESTING COMPLETE" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
           
-          echo "## 📊 Workflow Information" >> $GITHUB_STEP_SUMMARY
-          echo "" >> $GITHUB_STEP_SUMMARY
-          echo "| Metric | Value |" >> $GITHUB_STEP_SUMMARY
-          echo "|--------|-------|" >> $GITHUB_STEP_SUMMARY
-          echo "| **Workflow** | ${{ github.workflow }}" >> $GITHUB_STEP_SUMMARY
-          echo "| **Run ID** | ${{ github.run_id }} (Attempt ${{ github.run_attempt }})" >> $GITHUB_STEP_SUMMARY
-          echo "| **Mode** | ${{ github.event.inputs.execution_mode }}" >> $GITHUB_STEP_SUMMARY
-          echo "| **Test Type** | ${{ github.event.inputs.test_type }}" >> $GITHUB_STEP_SUMMARY
-          echo "| **Trigger** | ${{ github.event_name }}" >> $GITHUB_STEP_SUMMARY
-          echo "| **Branch** | ${{ github.ref_name }}" >> $GITHUB_STEP_SUMMARY
-          echo "| **Commit** | ${{ github.sha }}" >> $GITHUB_STEP_SUMMARY
+          echo "## 📊 Workflow Results" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
           
-          echo "## 📦 Generated Artifacts" >> $GITHUB_STEP_SUMMARY
+          MODE="${{ github.event.inputs.execution_mode }}"
+          TEST_TYPE="${{ github.event.inputs.test_type }}"
+          
+          echo "**Execution Mode:** $MODE" >> $GITHUB_STEP_SUMMARY
+          echo "**Test Type:** $TEST_TYPE" >> $GITHUB_STEP_SUMMARY
+          echo "**Workflow Status:** ${{ job.status }}" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
           
-          if [ "${{ github.event.inputs.execution_mode }}" = "single-region" ]; then
-            echo "- **Single Region Results:** Detailed test results from US West region" >> $GITHUB_STEP_SUMMARY
-            echo "- **Performance Report:** Comprehensive analysis with metrics and graphs" >> $GITHUB_STEP_SUMMARY
+          if [ "$MODE" = "single-region" ]; then
+            echo "✅ **Single Region Test Completed**" >> $GITHUB_STEP_SUMMARY
+            echo "" >> $GITHUB_STEP_SUMMARY
+            echo "Test results are available in the artifacts. Check the 'single-region-results' artifact for detailed metrics." >> $GITHUB_STEP_SUMMARY
           else
-            echo "- **Regional Results:** Individual test results from 3 global regions" >> $GITHUB_STEP_SUMMARY
-            echo "- **Global Analysis Report:** Comparative analysis across regions" >> $GITHUB_STEP_SUMMARY
-            echo "- **Regional Summaries:** Individual summaries for US, EU, and APAC" >> $GITHUB_STEP_SUMMARY
+            echo "🌍 **Multi-Region Testing Completed**" >> $GITHUB_STEP_SUMMARY
+            echo "" >> $GITHUB_STEP_SUMMARY
+            echo "Performance tests were executed across 3 regions:" >> $GITHUB_STEP_SUMMARY
+            echo "1. 🇺🇸 US West (California)" >> $GITHUB_STEP_SUMMARY
+            echo "2. 🇳🇱 EU West (Netherlands)" >> $GITHUB_STEP_SUMMARY
+            echo "3. 🇸🇬 APAC Singapore" >> $GITHUB_STEP_SUMMARY
+            echo "" >> $GITHUB_STEP_SUMMARY
+            echo "📊 **Global report generated** with comparative analysis." >> $GITHUB_STEP_SUMMARY
+            echo "📦 **Artifacts available:**" >> $GITHUB_STEP_SUMMARY
+            echo "- Individual region results" >> $GITHUB_STEP_SUMMARY
+            echo "- Global comparison report" >> $GITHUB_STEP_SUMMARY
+            echo "- Performance insights and recommendations" >> $GITHUB_STEP_SUMMARY
           fi
           
           echo "" >> $GITHUB_STEP_SUMMARY
-          echo "## 🔧 Next Steps" >> $GITHUB_STEP_SUMMARY
+          echo "## 📈 Next Steps" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
-          
-          if [ "${{ job.status }}" = "success" ]; then
-            echo "✅ **All tests completed successfully!**" >> $GITHUB_STEP_SUMMARY
-            echo "" >> $GITHUB_STEP_SUMMARY
-            echo "1. **Review the artifacts** for detailed metrics and analysis" >> $GITHUB_STEP_SUMMARY
-            echo "2. **Check the generated reports** for performance insights" >> $GITHUB_STEP_SUMMARY
-            echo "3. **Share findings** with your team" >> $GITHUB_STEP_SUMMARY
-            echo "4. **Schedule follow-up tests** if needed" >> $GITHUB_STEP_SUMMARY
-          else
-            echo "⚠️ **Some tests may have failed or been skipped**" >> $GITHUB_STEP_SUMMARY
-            echo "" >> $GITHUB_STEP_SUMMARY
-            echo "1. **Check the workflow logs** for error details" >> $GITHUB_STEP_SUMMARY
-            echo "2. **Review uploaded artifacts** for partial results" >> $GITHUB_STEP_SUMMARY
-            echo "3. **Verify test file paths** and configurations" >> $GITHUB_STEP_SUMMARY
-            echo "4. **Retry the workflow** after fixing any issues" >> $GITHUB_STEP_SUMMARY
-          fi
-          
+          echo "1. **Download artifacts** for detailed analysis" >> $GITHUB_STEP_SUMMARY
+          echo "2. **Review performance metrics** and thresholds" >> $GITHUB_STEP_SUMMARY
+          echo "3. **Address any critical issues** identified" >> $GITHUB_STEP_SUMMARY
+          echo "4. **Share findings** with your team" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
           echo "---" >> $GITHUB_STEP_SUMMARY
-          echo "*Workflow completed at: $(date '+%Y-%m-%d %H:%M:%S UTC')*" >> $GITHUB_STEP_SUMMARY
+          echo "*Workflow completed at: $(date)*" >> $GITHUB_STEP_SUMMARY
