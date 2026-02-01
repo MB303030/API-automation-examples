@@ -1,4 +1,4 @@
-name: Final
+name: final
 
 on:
   workflow_dispatch:
@@ -216,33 +216,31 @@ jobs:
           
           mkdir -p "tests/performance/${{ env.TEST_TYPE }}"
           
-          # Use cat with different EOF delimiter to avoid conflicts
-          cat > "${{ env.TEST_FILE }}" << 'SAMPLE_EOF'
-import http from 'k6/http';
-import { check, sleep } from 'k6';
-import { Trend, Rate } from 'k6/metrics';
-
-export const options = {
-  stages: [
-    { duration: '30s', target: 5 },
-    { duration: '1m', target: 10 },
-    { duration: '30s', target: 0 },
-  ],
-  thresholds: {
-    http_req_duration: ['p(95)<1000'],
-    http_req_failed: ['rate<0.01'],
-  },
-};
-
-export default function () {
-  const res = http.get('https://test-api.k6.io/public/crocodiles/');
-  check(res, {
-    'status is 200': (r) => r.status === 200,
-    'response time < 2s': (r) => r.timings.duration < 2000,
-  });
-  sleep(1);
-}
-SAMPLE_EOF
+          # Create the test file with echo commands to avoid here-doc issues
+          echo "import http from 'k6/http';" > "${{ env.TEST_FILE }}"
+          echo "import { check, sleep } from 'k6';" >> "${{ env.TEST_FILE }}"
+          echo "import { Trend, Rate } from 'k6/metrics';" >> "${{ env.TEST_FILE }}"
+          echo "" >> "${{ env.TEST_FILE }}"
+          echo "export const options = {" >> "${{ env.TEST_FILE }}"
+          echo "  stages: [" >> "${{ env.TEST_FILE }}"
+          echo "    { duration: '30s', target: 5 }," >> "${{ env.TEST_FILE }}"
+          echo "    { duration: '1m', target: 10 }," >> "${{ env.TEST_FILE }}"
+          echo "    { duration: '30s', target: 0 }," >> "${{ env.TEST_FILE }}"
+          echo "  ]," >> "${{ env.TEST_FILE }}"
+          echo "  thresholds: {" >> "${{ env.TEST_FILE }}"
+          echo "    http_req_duration: ['p(95)<1000']," >> "${{ env.TEST_FILE }}"
+          echo "    http_req_failed: ['rate<0.01']," >> "${{ env.TEST_FILE }}"
+          echo "  }," >> "${{ env.TEST_FILE }}"
+          echo "};" >> "${{ env.TEST_FILE }}"
+          echo "" >> "${{ env.TEST_FILE }}"
+          echo "export default function () {" >> "${{ env.TEST_FILE }}"
+          echo "  const res = http.get('https://test-api.k6.io/public/crocodiles/');" >> "${{ env.TEST_FILE }}"
+          echo "  check(res, {" >> "${{ env.TEST_FILE }}"
+          echo "    'status is 200': (r) => r.status === 200," >> "${{ env.TEST_FILE }}"
+          echo "    'response time < 2s': (r) => r.timings.duration < 2000," >> "${{ env.TEST_FILE }}"
+          echo "  });" >> "${{ env.TEST_FILE }}"
+          echo "  sleep(1);" >> "${{ env.TEST_FILE }}"
+          echo "}" >> "${{ env.TEST_FILE }}"
           
           echo "✅ Sample test file created at ${{ env.TEST_FILE }}"
 
@@ -396,13 +394,11 @@ SAMPLE_EOF
             global-report.md
 
   # ============================================================
-  # WORKFLOW SUMMARY
+  # WORKFLOW SUMMARY (FIXED VERSION)
   # ============================================================
   workflow-summary:
     runs-on: ubuntu-latest
-    needs: 
-      - single-region-test
-      - regional-analysis
+    timeout-minutes: 5
     if: always()
     
     steps:
@@ -423,6 +419,11 @@ SAMPLE_EOF
             echo "✅ **Single Region Test Completed**" >> $GITHUB_STEP_SUMMARY
             echo "" >> $GITHUB_STEP_SUMMARY
             echo "Check the 'single-region-results' artifact for detailed metrics and report." >> $GITHUB_STEP_SUMMARY
+            echo "" >> $GITHUB_STEP_SUMMARY
+            echo "**What's included:**" >> $GITHUB_STEP_SUMMARY
+            echo "- Test execution output" >> $GITHUB_STEP_SUMMARY
+            echo "- JSON results data" >> $GITHUB_STEP_SUMMARY
+            echo "- Performance report with graphs" >> $GITHUB_STEP_SUMMARY
           else
             echo "🌍 **Multi-Region Testing Completed**" >> $GITHUB_STEP_SUMMARY
             echo "" >> $GITHUB_STEP_SUMMARY
@@ -434,6 +435,11 @@ SAMPLE_EOF
             echo "📦 **Artifacts available:**" >> $GITHUB_STEP_SUMMARY
             echo "- Individual region results (output, json, summary)" >> $GITHUB_STEP_SUMMARY
             echo "- Global comparison report" >> $GITHUB_STEP_SUMMARY
+            echo "" >> $GITHUB_STEP_SUMMARY
+            echo "**Next steps:**" >> $GITHUB_STEP_SUMMARY
+            echo "1. Download artifacts from the workflow run" >> $GITHUB_STEP_SUMMARY
+            echo "2. Review regional performance differences" >> $GITHUB_STEP_SUMMARY
+            echo "3. Check for any region-specific issues" >> $GITHUB_STEP_SUMMARY
           fi
           
           echo "" >> $GITHUB_STEP_SUMMARY
