@@ -1,107 +1,110 @@
-name: GPT Regional API Tests
+name: GPT region Performance
 
 on:
   workflow_dispatch:
     inputs:
       test_type:
-        description: 'Which existing test to run in all regions?'
+        description: 'Select which performance test to run'
         required: true
-        default: 'load'
+        default: 'all'
         type: choice
-        options:
-          - smoke
-          - load
-          - spike
-          - stress
+        options: [all, smoke, load, spike, stress]
 
 jobs:
-  test-regions:
-    defaults:
-      run:
-        shell: bash   # ✅ FIX 1: force bash on all runners
+  test:
+    runs-on: ubuntu-latest
 
     strategy:
       matrix:
-        runner: [ubuntu-latest, windows-latest]
-        include:
-          - runner: ubuntu-latest
+        region:
+          - region_id: us-west
             region_label: "US (Likely West)"
-            region_id: us-west
-          - runner: windows-latest
+          - region_id: eu-nl
             region_label: "EU (Likely Netherlands)"
-            region_id: eu-nl
 
-    runs-on: ${{ matrix.runner }}
+    env:
+      K6_REGION: ${{ matrix.region_label }}
+      K6_REGION_ID: ${{ matrix.region.region_id }}
 
     steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
+      - uses: actions/checkout@v4
 
       - name: Setup k6
         uses: grafana/setup-k6-action@v1
 
-      - name: Run test from ${{ matrix.region_label }}
+      # ----------------------------------------------------
+      # Decide which tests to run (UNCHANGED)
+      # ----------------------------------------------------
+      - name: Determine which tests to run
         run: |
           TEST_TYPE="${{ github.event.inputs.test_type }}"
-          TEST_PATH="tests/performance/$TEST_TYPE/dummyjson-$TEST_TYPE.js"
 
-          echo "📁 Running test: $TEST_PATH"
-          echo "📍 Region: ${{ matrix.region_label }}"
-
-          k6 run "$TEST_PATH" \
-            --out json="results-${{ matrix.region_id }}.json" \
-            --summary-export="summary-${{ matrix.region_id }}.json" \
-            2>&1 | tee "output-${{ matrix.region_id }}.txt"
-
-      - name: Upload results for this region
-        uses: actions/upload-artifact@v4
-        with:
-          name: results-${{ matrix.region_id }}-${{ github.event.inputs.test_type }}
-          path: |
-            results-${{ matrix.region_id }}.json
-            summary-${{ matrix.region_id }}.json
-            output-${{ matrix.region_id }}.txt
-
-  combine-report:
-    runs-on: ubuntu-latest
-    needs: test-regions
-
-    steps:
-      - name: Install jq and bc
-        run: sudo apt-get update && sudo apt-get install -y jq bc   # ✅ FIX 3
-
-      - name: Download all regional results
-        uses: actions/download-artifact@v4
-        with:
-          path: all-results
-
-      - name: Create combined regional report
-        run: |
-          echo "# 🌍 Regional Performance Comparison" > REGIONAL_REPORT.md
-          echo "**Test:** ${{ github.event.inputs.test_type }}" >> REGIONAL_REPORT.md
-          echo "" >> REGIONAL_REPORT.md
-          echo "| Region | Avg Latency | p95 Latency | Error Rate | Max VUs |" >> REGIONAL_REPORT.md
-          echo "|--------|-------------|-------------|------------|--------|" >> REGIONAL_REPORT.md
-
-          for summary in all-results/results-*/summary-*.json; do
-            REGION=$(basename "$summary" .json | cut -d'-' -f2-)
-
-            AVG=$(jq -r '.metrics.http_req_duration.values.avg // "N/A"' "$summary")
-            P95=$(jq -r '.metrics.http_req_duration.values."p(95)" // "N/A"' "$summary")
-            ERR=$(jq -r '.metrics.http_req_failed.values.rate // 0' "$summary")
-            MAX_VUS=$(jq -r '.metrics.vus.values.max // "N/A"' "$summary")
-
-            ERR_PCT=$(echo "scale=2; $ERR * 100" | bc)
-
-            echo "| $REGION | ${AVG}ms | ${P95}ms | ${ERR_PCT}% | $MAX_VUS |" >> REGIONAL_REPORT.md
+          for T in SMOKE LOAD SPIKE STRESS; do
+            echo "RUN_$T=false" >> $GITHUB_ENV
           done
 
-          cat REGIONAL_REPORT.md
+          if [ "$TEST_TYPE" = "all" ]; then
+            for T in SMOKE LOAD SPIKE STRESS; do
+              echo "RUN_$T=true" >> $GITHUB_ENV
+            done
+          else
+            echo "RUN_${TEST_TYPE^^}=true" >> $GITHUB_ENV
+          fi
 
-      - name: Upload final combined report
+      # ----------------------------------------------------
+      # Run selected tests (REGIONAL)
+      # ----------------------------------------------------
+      - name: Run Selected Performance Tests (Regional)
+        run: |
+          declare -A TESTS=(
+            ["smoke"]="tests/performance/smoke/dummyjson-smoke.js"
+            ["load"]="tests/performance/load/dummyjson-load.js"
+            ["spike"]="tests/performance/spike/dummyjson-spike.js"
+            ["stress"]="tests/performance/stress/dummyjson-stress.js"
+          )
+
+          for TEST in smoke load spike stress; do
+            RUN_VAR="RUN_${TEST^^}"
+            if [ "${!RUN_VAR}" = "true" ]; then
+              echo "🌍 Region: $K6_REGION"
+              echo "🚀 Running ${TEST^} test"
+
+              k6 run "${TESTS[$TEST]}" \
+                --env REGION="$K6_REGION" \
+                --out json="k6-${TEST}-${K6_REGION_ID}.json" \
+                2>&1 | tee "k6-${TEST}-${K6_REGION_ID}-output.txt"
+            fi
+          done
+
+      # ----------------------------------------------------
+      # REGIONAL METRICS SUMMARY (NEW)
+      # ----------------------------------------------------
+      - name: Add Regional Metrics Summary
+        run: |
+          echo "## 🌍 Regional Results – $K6_REGION" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "| Test | p95 (ms) | Error Rate | Status |" >> $GITHUB_STEP_SUMMARY
+          echo "|------|----------|------------|--------|" >> $GITHUB_STEP_SUMMARY
+
+          for TEST in smoke load spike stress; do
+            FILE="k6-${TEST}-${K6_REGION_ID}-output.txt"
+            if [ -f "$FILE" ]; then
+              P95=$(grep "p(95)=" "$FILE" | tail -1 | sed 's/.*p(95)=//; s/ms.*//')
+              ERR=$(grep "http_req_failed" "$FILE" | grep rate | tail -1 | sed 's/.*rate=//; s/%.*//')
+              if grep -q "❌" "$FILE"; then STATUS="❌ FAIL"; else STATUS="✅ PASS"; fi
+              echo "| ${TEST^} | ${P95:-N/A} | ${ERR:-0}% | $STATUS |" >> $GITHUB_STEP_SUMMARY
+            fi
+          done
+
+          echo "" >> $GITHUB_STEP_SUMMARY
+
+      # ----------------------------------------------------
+      # UPLOAD REGIONAL ARTIFACTS
+      # ----------------------------------------------------
+      - name: Upload Regional Artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: regional-comparison-report
+          name: performance-${{ matrix.region.region_id }}
           path: |
-            REGIONAL_REPORT.md
-            all-results/
+            k6-*-output.txt
+            k6-*.json
